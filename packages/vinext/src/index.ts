@@ -374,8 +374,22 @@ const PAGES_CLOUDFLARE_WORKER_OPTIMIZE_DEPS_INCLUDE = Object.freeze([
   "use-sync-external-store/with-selector",
 ]);
 
+// In dev, @vitejs/plugin-rsc can serve "use client" modules nested inside a
+// package straight from node_modules, and Vite does not discover new deps from
+// imports in those files. ESM packages commonly import this CommonJS-only
+// package, which would then reach the browser without named exports. Vite
+// reuses pre-bundled deps by exact specifier, so list each published spelling.
+const APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE = Object.freeze([
+  "use-sync-external-store/shim",
+  "use-sync-external-store/shim/index.js",
+  "use-sync-external-store/shim/with-selector",
+  "use-sync-external-store/shim/with-selector.js",
+  "use-sync-external-store/with-selector",
+  "use-sync-external-store/with-selector.js",
+]);
+
 const OPTIONAL_OPTIMIZE_DEPS_WARNING_RE =
-  /Failed to resolve dependency: .*use-sync-external-store\/with-selector.*present in .* 'optimizeDeps\.include'/;
+  /Failed to resolve dependency: .*use-sync-external-store\/(?:shim|with-selector).*present in .* 'optimizeDeps\.include'/;
 const VINEXT_FILTERED_OPTIMIZE_DEPS_WARN = Symbol.for("vinext.filteredOptimizeDepsWarn");
 const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 const RSC_ENVIRONMENTS = new Set(["rsc", "ssr", "client"]);
@@ -3969,6 +3983,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     "react-dom/client",
                     "react/jsx-runtime",
                     "react/jsx-dev-runtime",
+                    ...APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE,
                   ]),
                 ],
                 // The client scanner also crawls app/ source files, so it
@@ -4197,7 +4212,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
             if (!config.server.middlewareMode) applyDevServerDefaults(config.server, {});
           }
         }
-        if (isServeCommand && hasCloudflarePlugin && hasPagesDir && !hasAppDir) {
+        if (isServeCommand && (hasAppDir || (hasCloudflarePlugin && hasPagesDir))) {
           suppressOptionalOptimizeDepsWarnings(config.logger);
         }
 

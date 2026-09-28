@@ -1,5 +1,6 @@
 import http from "node:http";
 import fsp from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { type ViteDevServer } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -2582,5 +2583,109 @@ describe("App Router public files whose route starts with basePath in dev", () =
     expect(res.status).toBe(405);
     expect(res.headers.get("allow")).toBe("GET, HEAD");
     expect(await res.text()).toBe("Method Not Allowed");
+  });
+});
+
+describe("App Router client modules nested in packages in dev", () => {
+  let server: ViteDevServer;
+  let baseUrl: string;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-nested-client-cjs-"));
+    const rootNodeModules = path.resolve(import.meta.dirname, "../node_modules");
+
+    // A real node_modules directory (per-package symlinks into the workspace
+    // root) so fixture-local packages can live next to the real deps.
+    const nmDir = path.join(tmpDir, "node_modules");
+    await fsp.mkdir(nmDir);
+    for (const entry of await fsp.readdir(rootNodeModules)) {
+      if (entry === ".vite" || entry === ".cache") continue;
+      await fsp.symlink(path.join(rootNodeModules, entry), path.join(nmDir, entry), "junction");
+    }
+
+    // CommonJS-only, like the published use-sync-external-store package
+    // (versions before 1.5.0 have no exports field).
+    const storeDir = path.join(nmDir, "use-sync-external-store");
+    await fsp.mkdir(path.join(storeDir, "shim"), { recursive: true });
+    await fsp.writeFile(
+      path.join(storeDir, "package.json"),
+      JSON.stringify({ name: "use-sync-external-store", version: "1.4.0" }),
+    );
+    await fsp.writeFile(
+      path.join(storeDir, "shim", "index.js"),
+      `"use strict";\nexports.useSyncExternalStore = require("react").useSyncExternalStore;\n`,
+    );
+
+    // The package entry is not a client module, so @vitejs/plugin-rsc serves
+    // the nested "use client" module to the browser from its node_modules path
+    // instead of through the dependency optimizer.
+    const libDir = path.join(nmDir, "nested-client-store-lib");
+    await fsp.mkdir(path.join(libDir, "internal"), { recursive: true });
+    await fsp.writeFile(
+      path.join(libDir, "package.json"),
+      JSON.stringify({ name: "nested-client-store-lib", type: "module", exports: "./index.js" }),
+    );
+    await fsp.writeFile(
+      path.join(libDir, "index.js"),
+      `export { StoreValue } from "./internal/store-value.js";\n`,
+    );
+    await fsp.writeFile(
+      path.join(libDir, "internal", "store-value.js"),
+      `"use client";
+import { createElement } from "react";
+import { useSyncExternalStore } from "use-sync-external-store/shim/index.js";
+
+const subscribe = () => () => {};
+
+export function StoreValue() {
+  const value = useSyncExternalStore(subscribe, () => "client", () => "server");
+  return createElement("p", { id: "store-value" }, value);
+}
+`,
+    );
+
+    await fsp.mkdir(path.join(tmpDir, "app"));
+    await fsp.writeFile(
+      path.join(tmpDir, "app", "layout.tsx"),
+      `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html>
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "app", "page.tsx"),
+      `import { StoreValue } from "nested-client-store-lib";
+
+export default function Page() {
+  return <StoreValue />;
+}
+`,
+    );
+
+    ({ server, baseUrl } = await startFixtureServer(tmpDir, { appRouter: true }));
+  }, 30000);
+
+  afterAll(async () => {
+    await server?.close();
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("serves use-sync-external-store to the browser from pre-bundled deps (#1207)", async () => {
+    const { res, html } = await fetchHtml(baseUrl, "/");
+    expect(res.status).toBe(200);
+    expect(html).toContain('<p id="store-value">server</p>');
+
+    const clientModule = await server.environments.client.transformRequest(
+      "/node_modules/nested-client-store-lib/internal/store-value.js",
+    );
+    // The raw CommonJS file has no named ESM exports, so importing it in the
+    // browser fails with "does not provide an export named 'useSyncExternalStore'".
+    expect(clientModule?.code).not.toContain("/node_modules/use-sync-external-store/shim/index.js");
+    expect(clientModule?.code).toContain("/deps/use-sync-external-store_shim_index__js.js");
   });
 });

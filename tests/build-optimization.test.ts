@@ -1096,6 +1096,84 @@ describe("optimizeDeps.exclude for vinext", () => {
       await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
   }, 15000);
+
+  it("suppresses missing optional App Router client optimizer warnings", async () => {
+    const vinext = (await import("../packages/vinext/src/index.js")).default;
+    const plugins = vinext();
+    const mainPlugin = plugins.find(
+      (p: any) =>
+        p.name === "vinext:config" &&
+        typeof p.config === "function" &&
+        typeof p.configResolved === "function",
+    );
+    expect(mainPlugin).toBeDefined();
+
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-app-dev-optwarn-"));
+    const rootNodeModules = path.resolve(import.meta.dirname, "../node_modules");
+    await fsp.symlink(rootNodeModules, path.join(tmpDir, "node_modules"), "junction");
+    await fsp.mkdir(path.join(tmpDir, "app"), { recursive: true });
+    await fsp.writeFile(
+      path.join(tmpDir, "app", "page.tsx"),
+      `export default function Home() { return <h1>Home</h1>; }`,
+    );
+    await fsp.writeFile(path.join(tmpDir, "next.config.mjs"), `export default {};`);
+
+    try {
+      const devConfig = await (mainPlugin as any).config(
+        { root: tmpDir, build: {}, plugins: [] },
+        { command: "serve" },
+      );
+      expect(devConfig.environments.client.optimizeDeps.include).toEqual(
+        expect.arrayContaining([
+          "use-sync-external-store/shim",
+          "use-sync-external-store/shim/index.js",
+          "use-sync-external-store/with-selector.js",
+        ]),
+      );
+
+      const warned: string[] = [];
+      const logger = {
+        hasWarned: false,
+        info() {},
+        warn(msg: string) {
+          warned.push(msg);
+        },
+        warnOnce(msg: string) {
+          warned.push(msg);
+        },
+        error() {},
+        clearScreen() {},
+        hasErrorLogged() {
+          return false;
+        },
+      };
+
+      await (mainPlugin as any).configResolved({
+        cacheDir: path.join(tmpDir, "node_modules", ".vite"),
+        command: "serve",
+        configFile: false,
+        environments: {},
+        logger,
+        plugins: [],
+      });
+
+      logger.warn(
+        "Failed to resolve dependency: use-sync-external-store/shim/index.js, present in client 'optimizeDeps.include'",
+      );
+      logger.warn(
+        "Failed to resolve dependency: \x1b[36muse-sync-external-store/shim/with-selector\x1b[39m, present in client 'optimizeDeps.include'",
+      );
+      logger.warn(
+        "Failed to resolve dependency: other-package, present in client 'optimizeDeps.include'",
+      );
+
+      expect(warned).toEqual([
+        "Failed to resolve dependency: other-package, present in client 'optimizeDeps.include'",
+      ]);
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15000);
 });
 
 // ─── process.env.NODE_ENV define ─────────────────────────────────────────────
