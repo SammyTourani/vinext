@@ -980,8 +980,9 @@ export class ResponseStoreBinding extends WorkerEntrypoint<
         const reconciliationFailures = reconciliation.failures.map((failure) => new Error(failure));
         if (reconciliation.purged.length) {
           try {
-            await this.purgeEdgeCacheByTags(reconciliation.purged.map(purgeTagForEntry));
-            await metadata.markTombstonesEdgePurged(reconciliation.purged);
+            if (await this.purgeEdgeCacheByTags(reconciliation.purged.map(purgeTagForEntry))) {
+              await metadata.markTombstonesEdgePurged(reconciliation.purged);
+            }
           } catch (reconciliationError) {
             reconciliationFailures.push(
               reconciliationError instanceof Error
