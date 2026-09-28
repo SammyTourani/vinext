@@ -15,7 +15,7 @@ import type {
 import { loadVinextRequestStage } from "vinext/server/request-stage";
 import { loadVinextResponseStage } from "vinext/server/response-stage";
 import { traceCachedResponseStart } from "vinext/internal/server/response-start-tracing";
-import { isNonCacheableCacheControl } from "vinext/shims/cdn-cache";
+import { isNonCacheableCacheControl, splitCacheControlDirectives } from "vinext/shims/cdn-cache";
 import { getVinextCdnBuildIdentity, VINEXT_CDN_BUILD_ID_HEADER } from "./cdn-build-id.js";
 
 type StageBinding = {
@@ -496,7 +496,7 @@ function finalizeGatewayResponse(
     // this request is unchanged, another visitor can take a different branch
     // through middleware, so downstream shared caches must never reuse it.
     if (preservesBrowserPolicy && cacheControl && !isNonCacheableCacheControl(cacheControl)) {
-      const directives = cacheControl.split(",").map((directive) => directive.trim());
+      const directives = splitCacheControlDirectives(cacheControl);
       headers.set(
         "Cache-Control",
         ["private", ...directives.filter((directive) => !/^public$/i.test(directive))].join(", "),

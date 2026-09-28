@@ -300,6 +300,23 @@ describe("CloudflareCdnCacheAdapter", () => {
     );
   });
 
+  it.each([
+    'foo="a,max-age=5"',
+    'foo="a,s-maxage=5,stale-while-revalidate=10"',
+    'foo="a,public,b"',
+    'foo="a\\\",max-age=5"',
+  ])("preserves the quoted cache extension %s", (extension) => {
+    const policy = `${extension}, max-age=10, s-maxage=60, stale-while-revalidate`;
+    const headers = adapter.buildResponseHeaders({
+      cacheControl: policy,
+      browserCacheControl: policy,
+    });
+    expect(headers["Cache-Control"]).toBe(`${extension}, max-age=10`);
+    expect(headers["Cloudflare-CDN-Cache-Control"]).toBe(
+      `public, ${extension}, max-age=60, stale-while-revalidate=31536000`,
+    );
+  });
+
   it("adds a Cache-Tag header from the page tags", () => {
     const headers = adapter.buildResponseHeaders({
       cacheControl: "s-maxage=60",

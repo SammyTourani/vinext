@@ -39,6 +39,7 @@
 
 import {
   isNonCacheableCacheControl,
+  splitCacheControlDirectives,
   type CdnCacheAdapter,
   type CdnCacheableHeaderInput,
   type CdnResponseHeaders,
@@ -161,11 +162,10 @@ const NO_STORE = "no-store";
 const BROWSER_REVALIDATE = "public, max-age=0, must-revalidate";
 
 function browserCacheControl(policy: string | undefined): string {
-  const directives = policy
-    ?.split(",")
-    .map((directive) => directive.trim())
-    .filter((directive) => !/^(?:s-maxage|stale-while-revalidate)(?:\s*=|$)/i.test(directive));
-  return directives?.some((directive) => directive && !/^public$/i.test(directive))
+  const directives = splitCacheControlDirectives(policy ?? "").filter(
+    (directive) => !/^(?:s-maxage|stale-while-revalidate)(?:\s*=|$)/i.test(directive),
+  );
+  return directives.some((directive) => !/^public$/i.test(directive))
     ? directives.join(", ")
     : BROWSER_REVALIDATE;
 }
@@ -190,15 +190,20 @@ const UNBOUNDED_SWR_SECONDS = 31_536_000; // 1 year
  * `public`.
  */
 function toEdgeCacheControl(cacheControl: string): string {
-  const directives = cacheControl.split(",").map((directive) => directive.trim());
+  const directives = splitCacheControlDirectives(cacheControl);
   const hasSharedMaxAge = directives.some((directive) => /^s-maxage\s*=/i.test(directive));
   const withMaxAge = directives
     .filter((directive) => !hasSharedMaxAge || !/^max-age\s*=/i.test(directive))
-    .join(", ")
-    .replace(/\bs-maxage\s*=/gi, "max-age=")
-    // Bare `stale-while-revalidate` (not followed by `=`) → explicit window.
-    .replace(/\bstale-while-revalidate\b(?!=)/g, `stale-while-revalidate=${UNBOUNDED_SWR_SECONDS}`);
-  return /\bpublic\b/.test(withMaxAge) ? withMaxAge : `public, ${withMaxAge}`;
+    .map((directive) =>
+      directive
+        .replace(/^s-maxage\s*=/i, "max-age=")
+        // Bare `stale-while-revalidate` (not followed by `=`) → explicit window.
+        .replace(/^stale-while-revalidate$/i, `stale-while-revalidate=${UNBOUNDED_SWR_SECONDS}`),
+    )
+    .join(", ");
+  return directives.some((directive) => /^public$/i.test(directive))
+    ? withMaxAge
+    : `public, ${withMaxAge}`;
 }
 
 /**

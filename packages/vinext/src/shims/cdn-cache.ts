@@ -80,11 +80,9 @@ export type CdnResponsePolicy = {
   hasExplicitNonCacheablePolicy(headers: Headers, baseline?: Headers): boolean;
 };
 
-/** Whether a Cache-Control value contains an exact non-cacheable directive. */
-export function isNonCacheableCacheControl(
-  cacheControl: string,
-  scope: "shared" | "browser" = "shared",
-): boolean {
+/** Split Cache-Control directives without treating quoted commas as separators. */
+export function splitCacheControlDirectives(cacheControl: string): string[] {
+  const directives: string[] = [];
   let start = 0;
   let quoted = false;
   let escaped = false;
@@ -92,15 +90,8 @@ export function isNonCacheableCacheControl(
   for (let index = 0; index <= cacheControl.length; index++) {
     const char = cacheControl[index];
     if (index === cacheControl.length || (char === "," && !quoted)) {
-      const directive = cacheControl.slice(start, index);
-      const equals = directive.indexOf("=");
-      const name = (equals === -1 ? directive : directive.slice(0, equals)).trim().toLowerCase();
-      if (
-        name === "no-store" ||
-        (equals === -1 && (name === "no-cache" || (scope === "shared" && name === "private")))
-      ) {
-        return true;
-      }
+      const directive = cacheControl.slice(start, index).trim();
+      if (directive) directives.push(directive);
       start = index + 1;
       continue;
     }
@@ -113,7 +104,22 @@ export function isNonCacheableCacheControl(
     escaped = false;
   }
 
-  return false;
+  return directives;
+}
+
+/** Whether a Cache-Control value contains an exact non-cacheable directive. */
+export function isNonCacheableCacheControl(
+  cacheControl: string,
+  scope: "shared" | "browser" = "shared",
+): boolean {
+  return splitCacheControlDirectives(cacheControl).some((directive) => {
+    const equals = directive.indexOf("=");
+    const name = (equals === -1 ? directive : directive.slice(0, equals)).trim().toLowerCase();
+    return (
+      name === "no-store" ||
+      (equals === -1 && (name === "no-cache" || (scope === "shared" && name === "private")))
+    );
+  });
 }
 
 /**
