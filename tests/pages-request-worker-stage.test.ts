@@ -359,7 +359,10 @@ describe("Pages Worker request stage", () => {
       handleRequestStage(new Request("https://example.com/page"), undefined, undefined, dispatch),
     );
 
-    expect(dispatch.mock.calls[0]?.[2]).toEqual({ cache: "shared" });
+    expect(dispatch.mock.calls[0]?.[2]).toEqual({
+      cache: "shared",
+      requiresBrowserRevalidation: true,
+    });
     expect(state.forcedDynamicReason).toBeUndefined();
   });
 

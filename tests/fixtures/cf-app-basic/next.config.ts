@@ -29,6 +29,12 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
+      ...["/api/browser-cache-redirect", "/api/browser-cache-pages-redirect"].map((source) => ({
+        source,
+        has: [{ type: "header" as const, key: "x-plan", value: "pro" }],
+        destination: "/api/browser-cache",
+        permanent: false,
+      })),
       {
         source: "/old-about",
         destination: "/about",
@@ -42,7 +48,16 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
-    return [{ source: "/rewrite-about", destination: "/about" }];
+    return {
+      beforeFiles: ["/api/browser-cache-rewrite", "/api/browser-cache-pages-rewrite"].map(
+        (source) => ({
+          source,
+          has: [{ type: "cookie" as const, key: "plan", value: "pro" }],
+          destination: source.replace(/-rewrite$/, "-query") + "?visitor=pro",
+        }),
+      ),
+      afterFiles: [{ source: "/rewrite-about", destination: "/about" }],
+    };
   },
 };
 

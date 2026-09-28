@@ -648,7 +648,7 @@ async function applyRewrite(
     validateExternalRewriteRequest: () => Promise<Response | null>;
   },
   cleanPathname: string,
-  recordCacheability = true,
+  onRuleSourceMatch: (rule: NextRewrite) => void = markConditionalRewriteCacheability,
 ): Promise<Response | string | null> {
   if (!HAS_CONFIG_REWRITES || !options.rewrites.length) return null;
 
@@ -660,7 +660,7 @@ async function applyRewrite(
     options.requestContext,
     options.basePathState,
     options.paramsPathname,
-    recordCacheability ? markConditionalRewriteCacheability : undefined,
+    onRuleSourceMatch,
   );
   if (!rewritten) return null;
 
@@ -997,6 +997,10 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
   // source segments here would make aliases such as `/%72ewrite` match
   // `/rewrite`, unlike Next.js. Dynamic captures must likewise retain their
   // original percent-encoding for Location substitution.
+  let hasRequestDependentConfigRules = false;
+  const trackRequestDependentConfigRule = (rule: NextRedirect | NextRewrite) => {
+    hasRequestDependentConfigRules ||= ruleUsesUnkeyedRequestCondition(rule);
+  };
   const redirectPathname = matchPathname(requestCleanPathname);
   const configMatchers =
     HAS_CONFIG_REDIRECTS && options.configRedirects.length
@@ -1008,7 +1012,9 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
         options.configRedirects,
         preMiddlewareRequestContext,
         basePathState,
-        dispatchResponseStage ? undefined : markConditionalRedirectCacheability,
+        dispatchResponseStage
+          ? trackRequestDependentConfigRule
+          : markConditionalRedirectCacheability,
       )
     : null;
   if (configMatchers && redirect) {
@@ -1064,6 +1070,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
     : undefined;
   let didMiddlewareRewrite = false;
   let didMiddlewareRewritePathname = false;
+  let middlewarePathnameEligible = false;
 
   if (runMiddleware) {
     const middlewareResult = await runMiddleware({
@@ -1076,6 +1083,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
       request: userlandRequest,
       validateExternalRewriteRequest: () => validateClaimedOutsideBasePathRsc(true),
     });
+    middlewarePathnameEligible = middlewareResult.pathnameEligible !== false;
     if (!dispatchResponseStage && middlewareResult.pathnameEligible) {
       // Next.js runs matched middleware before serving a page response. A CDN
       // HIT in front of this Worker would skip that request-specific boundary,
@@ -1129,7 +1137,6 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
     resolvedRoutePathname: pathnameForResolvedUrl(resolvedRouteUrl),
   });
   let responseStagePolicyPromise: Promise<Array<[string, string]> | null> | undefined;
-  let hasRequestDependentConfigHeaders = false;
   const loadResponseStagePolicy = () =>
     (responseStagePolicyPromise ??= options.configHeaders.length
       ? import("./config-headers.js").then(({ resolveResponseStageCachePolicy }) =>
@@ -1140,7 +1147,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
               pathname: matchPathname(requestCleanPathname),
               requestContext: preMiddlewareRequestContext,
               onRequestDependentRule: () => {
-                hasRequestDependentConfigHeaders = true;
+                hasRequestDependentConfigRules = true;
               },
             }),
           ),
@@ -1258,8 +1265,8 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
             cache,
             ...(cacheIdentity ? { cacheIdentity } : {}),
             ...(cache === "shared" &&
-            (didMiddlewareRewrite ||
-              hasRequestDependentConfigHeaders ||
+            (middlewarePathnameEligible ||
+              hasRequestDependentConfigRules ||
               ("resolvedUrl" in props && props.resolvedUrl !== originalResolvedUrl))
               ? { requiresBrowserRevalidation: true }
               : {}),
@@ -1441,7 +1448,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
         validateExternalRewriteRequest: () => validateClaimedOutsideBasePathRsc(true),
       },
       matchPathname(cleanPathname),
-      dispatchResponseStage === undefined,
+      dispatchResponseStage ? trackRequestDependentConfigRule : markConditionalRewriteCacheability,
     );
     if (beforeFilesRewrite instanceof Response) return beforeFilesRewrite;
     if (beforeFilesRewrite) {
@@ -1482,7 +1489,9 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
           validateExternalRewriteRequest: () => validateClaimedOutsideBasePathRsc(true),
         },
         matchPathname(cleanPathname),
-        dispatchResponseStage === undefined,
+        dispatchResponseStage
+          ? trackRequestDependentConfigRule
+          : markConditionalRewriteCacheability,
       );
       if (rewritten instanceof Response) return rewritten;
       if (!rewritten) continue;
@@ -1512,7 +1521,9 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
             validateExternalRewriteRequest: () => validateClaimedOutsideBasePathRsc(true),
           },
           matchPathname(cleanPathname),
-          dispatchResponseStage === undefined,
+          dispatchResponseStage
+            ? trackRequestDependentConfigRule
+            : markConditionalRewriteCacheability,
         );
         if (rewritten instanceof Response) return rewritten;
         if (!rewritten) continue;
@@ -1735,6 +1746,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
           : "middleware is eligible for this pathname",
       );
     }
+    middlewarePathnameEligible ||= sourceMiddlewareResult.pathnameEligible !== false;
     if (sourceMiddlewareResult.kind === "response") {
       options.clearRequestContext();
       return sourceMiddlewareResult.response;
@@ -1980,8 +1992,8 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
             {
               cache,
               ...(cache === "shared" &&
-              (didMiddlewareRewrite ||
-                hasRequestDependentConfigHeaders ||
+              (middlewarePathnameEligible ||
+                hasRequestDependentConfigRules ||
                 resolvedUrl !== originalResolvedUrl ||
                 preHandlerHeaders?.some(
                   ([name]) => name.toLowerCase() !== "vary" && !isCdnResponsePolicyHeader(name),
@@ -2080,7 +2092,9 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
           validateExternalRewriteRequest: () => validateClaimedOutsideBasePathRsc(true),
         },
         matchPathname(cleanPathname),
-        dispatchResponseStage === undefined,
+        dispatchResponseStage
+          ? trackRequestDependentConfigRule
+          : markConditionalRewriteCacheability,
       );
       if (afterFilesRewrite instanceof Response) {
         invalidateInterceptionCacheProof();
@@ -2139,7 +2153,9 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
           validateExternalRewriteRequest: () => validateClaimedOutsideBasePathRsc(true),
         },
         matchPathname(cleanPathname),
-        dispatchResponseStage === undefined,
+        dispatchResponseStage
+          ? trackRequestDependentConfigRule
+          : markConditionalRewriteCacheability,
       );
       if (fallbackRewrite instanceof Response) {
         invalidateInterceptionCacheProof();

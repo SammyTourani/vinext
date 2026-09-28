@@ -314,8 +314,8 @@ async function handleRequestImpl(
     }
 
     let responseStageDispatched = false;
-    let didMiddlewareRewrite = false;
-    let hasRequestDependentConfigHeaders = false;
+    let middlewarePathnameEligible = false;
+    let hasRequestDependentConfigRules = false;
     const trackedDispatchResponseStage: PagesStageRuntimeDispatch = (
       stageRequest,
       props,
@@ -332,8 +332,8 @@ async function handleRequestImpl(
             : request.url;
       const requiresBrowserRevalidation =
         options.cache === "shared" &&
-        (didMiddlewareRewrite ||
-          hasRequestDependentConfigHeaders ||
+        (middlewarePathnameEligible ||
+          hasRequestDependentConfigRules ||
           new URL(resolvedUrl, request.url).href !== request.url ||
           props.stagedHeaders?.some(
             ([name]) => name.toLowerCase() !== "vary" && !isCdnResponsePolicyHeader(name),
@@ -442,7 +442,7 @@ async function handleRequestImpl(
       : pathname;
     const responseStagePolicyHeaders = resolveResponseStageCachePolicy({
       onRequestDependentRule: () => {
-        hasRequestDependentConfigHeaders = true;
+        hasRequestDependentConfigRules = true;
       },
       basePathState: { basePath, hadBasePath },
       configHeaders,
@@ -469,6 +469,9 @@ async function handleRequestImpl(
       hasMiddleware,
       ctx,
       recordCacheability: forceCacheBypass,
+      onRequestDependentRoutingRule: () => {
+        hasRequestDependentConfigRules = true;
+      },
       middlewareRequest:
         isDataReq && vinextConfig?.skipProxyUrlNormalize ? middlewareRequest : undefined,
       dataNotFoundResponse: vinextConfig?.skipProxyUrlNormalize ? dataNorm.notFoundResponse : null,
@@ -481,7 +484,7 @@ async function handleRequestImpl(
           ? wrapMiddlewareWithBasePath(
               async (...args) => {
                 const result = await runMiddleware(...args);
-                didMiddlewareRewrite = Boolean(result.rewriteUrl);
+                middlewarePathnameEligible = result.pathnameEligible === true;
                 return result;
               },
               basePath,

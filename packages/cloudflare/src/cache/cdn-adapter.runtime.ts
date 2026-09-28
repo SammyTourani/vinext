@@ -165,7 +165,11 @@ function browserCacheControl(policy: string | undefined): string {
   const directives = splitCacheControlDirectives(policy ?? "").filter(
     (directive) => !/^(?:s-maxage|stale-while-revalidate)(?:\s*=|$)/i.test(directive),
   );
-  return directives.some((directive) => !/^public$/i.test(directive))
+  // Extensions alone still permit heuristic freshness (for example from
+  // Last-Modified); preserve only an explicit lifetime or cache prohibition.
+  return directives.some((directive) =>
+    /^(?:max-age\s*=\s*(?:\d+|"\d+")|no-store|no-cache)$/i.test(directive),
+  )
     ? directives.join(", ")
     : BROWSER_REVALIDATE;
 }

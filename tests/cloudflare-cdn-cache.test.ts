@@ -262,10 +262,16 @@ describe("CloudflareCdnCacheAdapter", () => {
 
   it.each([
     ["max-age=10", "max-age=10"],
+    ['max-age="10"', 'max-age="10"'],
     ["public, max-age=300, s-maxage=600, stale-while-revalidate=60", "public, max-age=300"],
     ["private, max-age=10", "private, max-age=10"],
     ["no-store", "no-store"],
+    ["no-cache", "no-cache"],
     ["public, s-maxage=600", "public, max-age=0, must-revalidate"],
+    ["public, foo=bar, s-maxage=600", "public, max-age=0, must-revalidate"],
+    ["must-revalidate, s-maxage=600", "public, max-age=0, must-revalidate"],
+    ["immutable, s-maxage=600", "public, max-age=0, must-revalidate"],
+    ["max-age=invalid, s-maxage=600", "public, max-age=0, must-revalidate"],
   ])("keeps browser policy %s separate from the edge", (browserCacheControl, expected) => {
     const headers = adapter.buildResponseHeaders({
       cacheControl: "max-age=3600",

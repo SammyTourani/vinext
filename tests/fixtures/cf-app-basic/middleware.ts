@@ -10,8 +10,9 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function middleware(request: NextRequest) {
   const visitorId = request.headers.get("x-test-visitor-id") ?? "anonymous";
   if (
-    request.nextUrl.pathname === "/api/browser-cache-query" ||
-    request.nextUrl.pathname === "/api/browser-cache-pages-query"
+    request.headers.has("x-test-visitor-id") &&
+    (request.nextUrl.pathname === "/api/browser-cache-query" ||
+      request.nextUrl.pathname === "/api/browser-cache-pages-query")
   ) {
     const destination = request.nextUrl.clone();
     destination.searchParams.set("visitor", visitorId);
@@ -69,3 +70,19 @@ export async function middleware(request: NextRequest) {
   }
   return response;
 }
+
+// Browser-TTL fixtures bypass middleware; the conditional fixtures exercise
+// pathname eligibility even when the request-specific matcher does not run.
+export const config = {
+  matcher: [
+    "/((?!api/browser-cache(?:-pages)?(?:-(?:shared|static|config|conditional|middleware|redirect|rewrite))?$).*)",
+    {
+      source: "/api/browser-cache-middleware",
+      has: [{ type: "header", key: "x-test-visitor-id" }],
+    },
+    {
+      source: "/api/browser-cache-pages-middleware",
+      has: [{ type: "header", key: "x-test-visitor-id" }],
+    },
+  ],
+};

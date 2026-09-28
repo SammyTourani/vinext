@@ -82,12 +82,6 @@ test.describe("Cloudflare route-handler draft-mode cache isolation", () => {
       expect(response.headers()["cache-control"]).toBe(cacheControl);
       expect(response.headers()["cdn-cache-control"]).toBeUndefined();
       expect(response.headers()["cloudflare-cdn-cache-control"]).toBeUndefined();
-
-      const personalized = await request.get(`${BASE_URL}${pathname}`, {
-        headers: { "x-test-visitor-id": "alice" },
-      });
-      expect(personalized.headers()["x-cdn-stage-visitor"]).toBe("alice");
-      expect(personalized.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
     });
   }
 
@@ -138,7 +132,45 @@ test.describe("Cloudflare route-handler draft-mode cache isolation", () => {
     }
   });
 
+  test("revalidates browser reuse when conditional middleware is eligible", async ({ request }) => {
+    for (const visitor of [undefined, "alice"]) {
+      const response = await request.get(`${BASE_URL}/api/browser-cache-middleware`, {
+        headers: visitor ? { "x-test-visitor-id": visitor } : undefined,
+      });
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ browserCache: true });
+      expect(response.headers()["x-cdn-stage-visitor"]).toBe(visitor);
+      expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+    }
+  });
+
+  for (const kind of ["redirect", "rewrite"] as const) {
+    test(`revalidates browser reuse for conditional config routing: ${kind}`, async ({
+      request,
+    }) => {
+      const response = await request.get(`${BASE_URL}/api/browser-cache-${kind}`);
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ browserCache: true });
+      expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+
+      const routed = await request.get(`${BASE_URL}/api/browser-cache-${kind}`, {
+        headers: kind === "redirect" ? { "x-plan": "pro" } : { Cookie: "plan=pro" },
+        maxRedirects: 0,
+      });
+      if (kind === "redirect") {
+        expect(routed.status()).toBe(307);
+        expect(routed.headers()["location"]).toBe("/api/browser-cache");
+      } else {
+        expect(await routed.json()).toEqual({ visitor: "pro" });
+        // The matched cookie condition already prevents shared admission.
+        expect(routed.headers()["cache-control"]).toContain("no-store");
+      }
+    });
+  }
+
   test("revalidates browser reuse after a query-only middleware rewrite", async ({ request }) => {
+    const anonymous = await request.get(`${BASE_URL}/api/browser-cache-query?visitor=alice`);
+    expect(anonymous.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
     for (const visitor of ["alice", "bob"]) {
       const response = await request.get(`${BASE_URL}/api/browser-cache-query?visitor=alice`, {
         headers: { "x-test-visitor-id": visitor },
@@ -442,17 +474,51 @@ test.describe("Cloudflare Pages-only completed-response admission", () => {
     expect(response.headers()["cache-control"]).toBe("private, max-age=10");
     expect(response.headers()["cdn-cache-control"]).toBeUndefined();
     expect(response.headers()["cloudflare-cdn-cache-control"]).toBeUndefined();
-
-    const personalized = await request.get(`${pagesBaseUrl}/api/browser-cache-pages`, {
-      headers: { "x-test-visitor-id": "alice" },
-    });
-    expect(personalized.headers()["x-cdn-stage-visitor"]).toBe("alice");
-    expect(personalized.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
   });
+
+  test("revalidates browser reuse when conditional middleware is eligible", async ({ request }) => {
+    for (const visitor of [undefined, "alice"]) {
+      const response = await request.get(`${pagesBaseUrl}/api/browser-cache-pages-middleware`, {
+        headers: visitor ? { "x-test-visitor-id": visitor } : undefined,
+      });
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ browserCache: true });
+      expect(response.headers()["x-cdn-stage-visitor"]).toBe(visitor);
+      expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+    }
+  });
+
+  for (const kind of ["redirect", "rewrite"] as const) {
+    test(`revalidates browser reuse for conditional config routing: ${kind}`, async ({
+      request,
+    }) => {
+      const response = await request.get(`${pagesBaseUrl}/api/browser-cache-pages-${kind}`);
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ browserCache: true });
+      expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+
+      const routed = await request.get(`${pagesBaseUrl}/api/browser-cache-pages-${kind}`, {
+        headers: kind === "redirect" ? { "x-plan": "pro" } : { Cookie: "plan=pro" },
+        maxRedirects: 0,
+      });
+      if (kind === "redirect") {
+        expect(routed.status()).toBe(307);
+        expect(routed.headers()["location"]).toBe("/api/browser-cache");
+      } else {
+        expect(await routed.json()).toEqual({ visitor: "pro" });
+        // The matched cookie condition already prevents shared admission.
+        expect(routed.headers()["cache-control"]).toContain("no-store");
+      }
+    });
+  }
 
   test("revalidates browser reuse after a Pages query-only middleware rewrite", async ({
     request,
   }) => {
+    const anonymous = await request.get(
+      `${pagesBaseUrl}/api/browser-cache-pages-query?visitor=alice`,
+    );
+    expect(anonymous.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
     for (const visitor of ["alice", "bob"]) {
       const response = await request.get(
         `${pagesBaseUrl}/api/browser-cache-pages-query?visitor=alice`,
