@@ -929,6 +929,30 @@ describe("Cloudflare CDN multi-stage Worker facade", () => {
     expect(response.headers.get("x-vinext-cloudflare-shared-response-stage")).toBeNull();
   });
 
+  it("preserves browser policy when config restores a consumed edge header", async () => {
+    const binding = vi.fn(() => ({
+      fetch: vi.fn().mockResolvedValue(
+        new Response("shared", {
+          headers: { "Cache-Control": "public, max-age=300", "CF-Cache-Status": "HIT" },
+        }),
+      ),
+    }));
+    stages.request.mockImplementation(async (request, _env, _ctx, dispatch) => {
+      const response = await dispatch(request, { kind: "app-route" }, { cache: "shared" });
+      response.headers.set("Cloudflare-CDN-Cache-Control", "max-age=3600");
+      return response;
+    });
+    const response = await worker.fetch(
+      new Request("https://example.com/api/data"),
+      {},
+      {
+        exports: { VinextCachedResponse: binding },
+      },
+    );
+    expect(response.headers.get("Cache-Control")).toBe("private, max-age=300");
+    expect(response.headers.get("Cloudflare-CDN-Cache-Control")).toBeNull();
+  });
+
   it.each([
     "add",
     "change",

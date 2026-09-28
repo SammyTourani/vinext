@@ -72,6 +72,14 @@ const REQUEST_CF_TRANSPORT_HEADER = "x-vinext-internal-request-cf";
 const REQUEST_PRAGMA_TRANSPORT_HEADER = "x-vinext-internal-request-pragma";
 const CLOUDFLARE_EDGE_POLICY_HEADER = "Cloudflare-CDN-Cache-Control";
 const SHARED_RESPONSE_STAGE_HEADER = "x-vinext-cloudflare-shared-response-stage";
+const PRIVATE_RESPONSE_HEADERS = new Set([
+  SHARED_RESPONSE_STAGE_HEADER,
+  CLOUDFLARE_EDGE_POLICY_HEADER.toLowerCase(),
+  "cdn-cache-control",
+  "cache-tag",
+  VINEXT_CACHE_HEADER.toLowerCase(),
+  NEXTJS_CACHE_HEADER.toLowerCase(),
+]);
 const RESPONSE_STAGE_WIRE_CACHE = {
   bypass: "vinext-cloudflare-v1:bypass",
   shared: "vinext-cloudflare-v1:shared",
@@ -457,15 +465,20 @@ function finalizeGatewayResponse(
     !response.headers.has("Set-Cookie") &&
     response.status === sharedResponse.status &&
     [...response.headers].every(
-      ([name, value]) => name === "vary" || sharedResponse.headers.get(name) === value,
+      ([name, value]) =>
+        PRIVATE_RESPONSE_HEADERS.has(name) ||
+        name === "vary" ||
+        sharedResponse.headers.get(name) === value,
     ) &&
-    [...sharedResponse.headers].every(([name, value]) =>
-      name === "vary"
-        ? value
-            .toLowerCase()
-            .split(",")
-            .every((field) => vary.has(field.trim()))
-        : response.headers.get(name) === value,
+    [...sharedResponse.headers].every(
+      ([name, value]) =>
+        PRIVATE_RESPONSE_HEADERS.has(name) ||
+        (name === "vary"
+          ? value
+              .toLowerCase()
+              .split(",")
+              .every((field) => vary.has(field.trim()))
+          : response.headers.get(name) === value),
     );
   if (
     !response.headers.has(CLOUDFLARE_EDGE_POLICY_HEADER) &&
@@ -478,10 +491,7 @@ function finalizeGatewayResponse(
   headers.delete(SHARED_RESPONSE_STAGE_HEADER);
   headers.delete(CLOUDFLARE_EDGE_POLICY_HEADER);
   if (usedSharedResponseStage || sharedResponseStageCollision) {
-    headers.delete("CDN-Cache-Control");
-    headers.delete("Cache-Tag");
-    headers.delete(VINEXT_CACHE_HEADER);
-    headers.delete(NEXTJS_CACHE_HEADER);
+    for (const name of PRIVATE_RESPONSE_HEADERS) headers.delete(name);
     // The full invocation identity is private to Workers Cache. Even when
     // this request is unchanged, another visitor can take a different branch
     // through middleware, so downstream shared caches must never reuse it.
