@@ -9,6 +9,22 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 export async function middleware(request: NextRequest) {
   const visitorId = request.headers.get("x-test-visitor-id") ?? "anonymous";
+  if (
+    request.nextUrl.pathname === "/api/browser-cache-query" ||
+    request.nextUrl.pathname === "/api/browser-cache-pages-query"
+  ) {
+    const destination = request.nextUrl.clone();
+    destination.searchParams.set("visitor", visitorId);
+    return NextResponse.rewrite(destination);
+  }
+  if (
+    request.nextUrl.pathname.startsWith("/api/browser-cache") &&
+    request.headers.has("x-test-visitor-id")
+  ) {
+    const response = NextResponse.next();
+    response.headers.set("x-cdn-stage-visitor", visitorId);
+    return response;
+  }
   if (request.nextUrl.pathname.startsWith("/cdn-stage-cookie/")) {
     const response = NextResponse.next();
     response.cookies.set("stage-cookie", visitorId);

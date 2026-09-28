@@ -900,6 +900,83 @@ describe("Cloudflare CDN multi-stage Worker facade", () => {
     await expect(response.text()).resolves.toBe("shared");
   });
 
+  it.each(["MISS", "HIT"])("preserves browser policy on an unchanged %s", async (cacheStatus) => {
+    const binding = vi.fn(() => ({
+      fetch: vi.fn().mockResolvedValue(
+        new Response("shared", {
+          headers: {
+            "Cache-Control": "max-age=10",
+            "Cloudflare-CDN-Cache-Control": "public, max-age=3600",
+            "CF-Cache-Status": cacheStatus,
+          },
+        }),
+      ),
+    }));
+    stages.request.mockImplementation((request, _env, _ctx, dispatch) =>
+      dispatch(request, { kind: "app-route" }, { cache: "shared" }),
+    );
+
+    const response = await worker.fetch(
+      new Request("https://example.com/api/data"),
+      {},
+      {
+        exports: { VinextCachedResponse: binding },
+      },
+    );
+    expect(response.headers.get("Cache-Control")).toBe("private, max-age=10");
+    expect(response.headers.get("X-Vinext-Cache")).toBe(cacheStatus);
+    expect(response.headers.get("Cloudflare-CDN-Cache-Control")).toBeNull();
+    expect(response.headers.get("x-vinext-cloudflare-shared-response-stage")).toBeNull();
+  });
+
+  it.each([
+    "add",
+    "change",
+    "remove",
+    "cookie",
+    "status",
+    "remove-vary",
+    "qualified-no-cache",
+    "private",
+  ])("revalidates an explicit browser policy after gateway %s", async (mutation) => {
+    const binding = vi.fn(() => ({
+      fetch: vi.fn().mockResolvedValue(
+        new Response("shared", {
+          headers: {
+            "Cache-Control":
+              mutation === "qualified-no-cache"
+                ? 'public, max-age=300, no-cache="ETag"'
+                : mutation === "private"
+                  ? "private, max-age=300"
+                  : "max-age=10",
+            "X-Route": "shared",
+            Vary: "Accept",
+          },
+        }),
+      ),
+    }));
+    stages.request.mockImplementation(async (request, _env, _ctx, dispatch) => {
+      const response = await dispatch(request, { kind: "app-route" }, { cache: "shared" });
+      const headers = new Headers(response.headers);
+      if (["add", "qualified-no-cache", "private"].includes(mutation))
+        headers.set("X-Visitor", "alice");
+      if (mutation === "change") headers.set("X-Route", "alice");
+      if (mutation === "remove") headers.delete("X-Route");
+      if (mutation === "remove-vary") headers.delete("Vary");
+      if (mutation === "cookie") headers.set("Set-Cookie", "visitor=alice");
+      return new Response(response.body, { headers, status: mutation === "status" ? 201 : 200 });
+    });
+
+    const response = await worker.fetch(
+      new Request("https://example.com/api/data"),
+      {},
+      {
+        exports: { VinextCachedResponse: binding },
+      },
+    );
+    expect(response.headers.get("Cache-Control")).toBe("private, max-age=0, must-revalidate");
+  });
+
   it("does not rewrite an unrelated fallback after a speculative shared dispatch", async () => {
     const binding = vi.fn(() => ({
       fetch: vi.fn().mockResolvedValue(

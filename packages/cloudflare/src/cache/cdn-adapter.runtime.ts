@@ -13,11 +13,13 @@
  *   cache headers, so there is nothing to persist at the origin.
  * - `buildResponseHeaders` emits the SWR policy as `Cloudflare-CDN-Cache-Control`
  *   (`public, max-age=…, stale-while-revalidate=…`) so the edge caches and
- *   revalidates. The inner response's `Cache-Control` is
+ *   revalidates. An admitted endpoint keeps its explicit browser policy, with
+ *   shared-cache directives removed. Otherwise the inner `Cache-Control` is
  *   `public, max-age=0, must-revalidate` so a browser never serves a stored copy
  *   without revalidating against the edge; the uncached gateway changes that to
- *   `private, max-age=0, must-revalidate` before public egress so personalized
- *   request-stage headers cannot enter another shared cache. A `Cache-Tag`
+ *   `private, max-age=0, must-revalidate` before public egress. Explicit browser
+ *   lifetimes survive only when request-stage composition permits reuse. The
+ *   gateway keeps them private so another shared cache cannot bypass routing. A `Cache-Tag`
  *   header lets entries be purged by tag. Note the edge directive uses `max-age`
  *   (not `s-maxage`):
  *   the framework computes the policy with `s-maxage` for shared caches, but
@@ -158,6 +160,16 @@ const NO_STORE = "no-store";
  */
 const BROWSER_REVALIDATE = "public, max-age=0, must-revalidate";
 
+function browserCacheControl(policy: string | undefined): string {
+  const directives = policy
+    ?.split(",")
+    .map((directive) => directive.trim())
+    .filter((directive) => !/^(?:s-maxage|stale-while-revalidate)(?:\s*=|$)/i.test(directive));
+  return directives?.some((directive) => directive && !/^public$/i.test(directive))
+    ? directives.join(", ")
+    : BROWSER_REVALIDATE;
+}
+
 /**
  * A concrete stale window (1 year) substituted for a value-less
  * `stale-while-revalidate`. The framework emits a bare `stale-while-revalidate`
@@ -178,8 +190,12 @@ const UNBOUNDED_SWR_SECONDS = 31_536_000; // 1 year
  * `public`.
  */
 function toEdgeCacheControl(cacheControl: string): string {
-  const withMaxAge = cacheControl
-    .replace(/\bs-maxage=/g, "max-age=")
+  const directives = cacheControl.split(",").map((directive) => directive.trim());
+  const hasSharedMaxAge = directives.some((directive) => /^s-maxage\s*=/i.test(directive));
+  const withMaxAge = directives
+    .filter((directive) => !hasSharedMaxAge || !/^max-age\s*=/i.test(directive))
+    .join(", ")
+    .replace(/\bs-maxage\s*=/gi, "max-age=")
     // Bare `stale-while-revalidate` (not followed by `=`) → explicit window.
     .replace(/\bstale-while-revalidate\b(?!=)/g, `stale-while-revalidate=${UNBOUNDED_SWR_SECONDS}`);
   return /\bpublic\b/.test(withMaxAge) ? withMaxAge : `public, ${withMaxAge}`;
@@ -323,8 +339,8 @@ export class CloudflareCdnCacheAdapter implements CdnCacheAdapter {
     // Use Cloudflare's consumed edge-only header rather than CDN-Cache-Control.
     // The latter is forwarded to downstream CDNs, where the private inner
     // cache key and request-stage personalization are no longer available.
-    // The browser is told to revalidate every reuse so it never serves a stale
-    // stored copy.
+    // Keep an admitted endpoint's explicit browser policy, or require browser
+    // revalidation by default. Shared-cache directives belong only to the edge.
     const cacheTag = input.tags?.length ? formatCacheTag(input.tags) : null;
     if (input.tags?.length && !cacheTag) {
       return clearCloudflareCdnResponseHeaders(NO_STORE);
@@ -332,7 +348,7 @@ export class CloudflareCdnCacheAdapter implements CdnCacheAdapter {
 
     return {
       ...getBuildIdentityResponseHeader(),
-      "Cache-Control": BROWSER_REVALIDATE,
+      "Cache-Control": browserCacheControl(input.browserCacheControl),
       "CDN-Cache-Control": null,
       "Cloudflare-CDN-Cache-Control": toEdgeCacheControl(input.cacheControl),
       "Cache-Tag": cacheTag,

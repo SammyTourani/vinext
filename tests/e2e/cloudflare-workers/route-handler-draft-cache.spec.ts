@@ -67,6 +67,30 @@ test.describe("Cloudflare route-handler draft-mode cache isolation", () => {
     server.kill();
   });
 
+  // Next.js preserves user Cache-Control in build/templates/app-route.ts.
+  // The browser/edge split and gateway personalization are Workers-specific.
+  for (const [pathname, cacheControl] of [
+    ["/api/browser-cache", "private, max-age=10"],
+    ["/api/browser-cache-shared", "private, max-age=300"],
+    ["/api/browser-cache-static", "private, max-age=300"],
+    ["/api/browser-cache-config", "private, max-age=300"],
+  ]) {
+    test(`preserves browser cache policy for ${pathname}`, async ({ request }) => {
+      const response = await request.get(`${BASE_URL}${pathname}`);
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ browserCache: true });
+      expect(response.headers()["cache-control"]).toBe(cacheControl);
+      expect(response.headers()["cdn-cache-control"]).toBeUndefined();
+      expect(response.headers()["cloudflare-cdn-cache-control"]).toBeUndefined();
+
+      const personalized = await request.get(`${BASE_URL}${pathname}`, {
+        headers: { "x-test-visitor-id": "alice" },
+      });
+      expect(personalized.headers()["x-cdn-stage-visitor"]).toBe("alice");
+      expect(personalized.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+    });
+  }
+
   test("keeps draft and anonymous route-handler ISR responses isolated", async ({ request }) => {
     const forged = await request.get(`${BASE_URL}/api/draft-isr/forged-${Date.now()}`, {
       headers: { Cookie: "__prerender_bypass=forged" },
@@ -111,6 +135,32 @@ test.describe("Cloudflare route-handler draft-mode cache isolation", () => {
       expect(draftAfterAnonymous.cacheTag).toBeUndefined();
     } finally {
       await setDraftMode(request, false);
+    }
+  });
+
+  test("revalidates browser reuse after a query-only middleware rewrite", async ({ request }) => {
+    for (const visitor of ["alice", "bob"]) {
+      const response = await request.get(`${BASE_URL}/api/browser-cache-query?visitor=alice`, {
+        headers: { "x-test-visitor-id": visitor },
+      });
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ visitor });
+      expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+    }
+  });
+
+  test("keeps hybrid Pages query rewrites private", async ({ request }) => {
+    for (const visitor of ["alice", "bob"]) {
+      const response = await request.get(
+        `${BASE_URL}/api/browser-cache-pages-query?visitor=alice`,
+        {
+          headers: { "x-test-visitor-id": visitor },
+        },
+      );
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ visitor });
+      expect(response.headers()["cache-control"]).toMatch(/no-store|max-age=0/);
+      expect(response.headers()["cache-control"]).not.toContain("public");
     }
   });
 
@@ -372,6 +422,37 @@ test.describe("Cloudflare Pages-only completed-response admission", () => {
     expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
     expect(response.headers()["cdn-cache-control"]).toBeUndefined();
     expect(response.headers()["cloudflare-cdn-cache-control"]).toBeUndefined();
+  });
+
+  test("preserves browser cache policy for Pages API responses", async ({ request }) => {
+    const response = await request.get(`${pagesBaseUrl}/api/browser-cache-pages`);
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toEqual({ browserCache: true });
+    expect(response.headers()["cache-control"]).toBe("private, max-age=10");
+    expect(response.headers()["cdn-cache-control"]).toBeUndefined();
+    expect(response.headers()["cloudflare-cdn-cache-control"]).toBeUndefined();
+
+    const personalized = await request.get(`${pagesBaseUrl}/api/browser-cache-pages`, {
+      headers: { "x-test-visitor-id": "alice" },
+    });
+    expect(personalized.headers()["x-cdn-stage-visitor"]).toBe("alice");
+    expect(personalized.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+  });
+
+  test("revalidates browser reuse after a Pages query-only middleware rewrite", async ({
+    request,
+  }) => {
+    for (const visitor of ["alice", "bob"]) {
+      const response = await request.get(
+        `${pagesBaseUrl}/api/browser-cache-pages-query?visitor=alice`,
+        {
+          headers: { "x-test-visitor-id": visitor },
+        },
+      );
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ visitor });
+      expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+    }
   });
 
   test("keeps public Pages Edge API responses private after request.cf access", async ({

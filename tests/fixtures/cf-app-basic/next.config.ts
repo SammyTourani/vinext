@@ -4,6 +4,13 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        source: "/api/browser-cache-config",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=300" },
+          { key: "Cloudflare-CDN-Cache-Control", value: "max-age=3600" },
+        ],
+      },
+      {
         source: "/about",
         headers: [{ key: "X-Page-Header", value: "about-page" }],
       },

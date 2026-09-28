@@ -604,13 +604,14 @@ function responseWithCachePolicy(
   response: Response,
   body: BodyInit | null,
   outcome: RouteCacheabilityOutcome | null,
+  browserCacheControl?: string,
 ): Response {
   const headers = new Headers(response.headers);
   if (typeof body === "string") headers.delete("Content-Length");
   applyCdnResponseHeaders(
     headers,
     outcome?.cacheable === true && outcome.cacheControl
-      ? { cacheControl: outcome.cacheControl, tags: outcome.tags }
+      ? { cacheControl: outcome.cacheControl, tags: outcome.tags, browserCacheControl }
       : { cacheControl: NO_STORE_CACHE_CONTROL },
   );
   return new Response(body, {
@@ -800,7 +801,12 @@ async function finalizeWorkerCacheabilityAdmission(
     }
     if (state.completedResponseBody) {
       if (!state.applyCompletedResponsePolicy) return response;
-      return responseWithCachePolicy(response, response.body, outcome);
+      return responseWithCachePolicy(
+        response,
+        response.body,
+        outcome,
+        response.headers.get("Cache-Control") ?? undefined,
+      );
     }
 
     let captured: CapturedAdmissionBody;
@@ -817,7 +823,12 @@ async function finalizeWorkerCacheabilityAdmission(
     if (captured.kind === "fallback") {
       return responseWithCachePolicy(response, captured.body, null);
     }
-    return responseWithCachePolicy(response, captured.body, outcome);
+    return responseWithCachePolicy(
+      response,
+      captured.body,
+      outcome,
+      response.headers.get("Cache-Control") ?? undefined,
+    );
   }
 
   if (

@@ -39,6 +39,8 @@ export type CdnCacheableHeaderInput = {
    * when no cacheable policy applies.
    */
   cacheControl: string;
+  /** Explicit browser policy on an admitted endpoint, separate from the shared policy. */
+  browserCacheControl?: string;
   /**
    * True when this is a freshly-rendered **streaming** response whose
    * dynamic-ness is not yet proven (late Server Component request-API usage can
@@ -79,7 +81,10 @@ export type CdnResponsePolicy = {
 };
 
 /** Whether a Cache-Control value contains an exact non-cacheable directive. */
-export function isNonCacheableCacheControl(cacheControl: string): boolean {
+export function isNonCacheableCacheControl(
+  cacheControl: string,
+  scope: "shared" | "browser" = "shared",
+): boolean {
   let start = 0;
   let quoted = false;
   let escaped = false;
@@ -90,7 +95,10 @@ export function isNonCacheableCacheControl(cacheControl: string): boolean {
       const directive = cacheControl.slice(start, index);
       const equals = directive.indexOf("=");
       const name = (equals === -1 ? directive : directive.slice(0, equals)).trim().toLowerCase();
-      if (name === "no-store" || (equals === -1 && (name === "private" || name === "no-cache"))) {
+      if (
+        name === "no-store" ||
+        (equals === -1 && (name === "no-cache" || (scope === "shared" && name === "private")))
+      ) {
         return true;
       }
       start = index + 1;

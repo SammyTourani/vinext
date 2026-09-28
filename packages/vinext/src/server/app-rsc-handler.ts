@@ -1250,11 +1250,15 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
             adapterUsesQueryFreeCacheIdentity()
               ? createSharedAppPageCacheIdentity(dispatchRequest, stageProps)
               : undefined;
-          let response = await dispatchResponseStage(
-            dispatchRequest,
-            stageProps,
-            cacheIdentity ? { cache, cacheIdentity } : { cache },
-          );
+          let response = await dispatchResponseStage(dispatchRequest, stageProps, {
+            cache,
+            ...(cacheIdentity ? { cacheIdentity } : {}),
+            ...(cache === "shared" &&
+            (didMiddlewareRewrite ||
+              ("resolvedUrl" in props && props.resolvedUrl !== originalResolvedUrl))
+              ? { requiresBrowserRevalidation: true }
+              : {}),
+          });
           if (stageRequest.method.toUpperCase() === "HEAD" && response.body) {
             await response.body.cancel();
             response = new Response(null, {
@@ -1934,6 +1938,10 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
                 ? "shared"
                 : "bypass";
           const renderRequest = responseStageRequest(stageRequest);
+          const preHandlerHeaders =
+            cache === "shared" && resourceKind === "page" && dataKind === "static"
+              ? null
+              : [...(await loadPreHandlerResponseHeaders())];
           let response = await dispatchResponseStage(
             renderRequest,
             {
@@ -1956,10 +1964,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
               isRscRequest,
               matchKind,
               middlewareCookieOverlay,
-              preHandlerHeaders:
-                cache === "shared" && resourceKind === "page" && dataKind === "static"
-                  ? null
-                  : [...(await loadPreHandlerResponseHeaders())],
+              preHandlerHeaders,
               protocolVersion: APP_WORKER_RESPONSE_STAGE_PROTOCOL_VERSION,
               requestOrigin: url.origin,
               resourceKind,
@@ -1967,7 +1972,17 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
               resolvedUrl,
               scriptNonce: scriptNonce ?? null,
             },
-            { cache },
+            {
+              cache,
+              ...(cache === "shared" &&
+              (didMiddlewareRewrite ||
+                resolvedUrl !== originalResolvedUrl ||
+                preHandlerHeaders?.some(
+                  ([name]) => name.toLowerCase() !== "vary" && !isCdnResponsePolicyHeader(name),
+                ))
+                ? { requiresBrowserRevalidation: true }
+                : {}),
+            },
           );
           const policyOwner =
             resourceKind === "page"

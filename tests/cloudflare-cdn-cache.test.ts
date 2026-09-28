@@ -260,6 +260,46 @@ describe("CloudflareCdnCacheAdapter", () => {
     });
   });
 
+  it.each([
+    ["max-age=10", "max-age=10"],
+    ["public, max-age=300, s-maxage=600, stale-while-revalidate=60", "public, max-age=300"],
+    ["private, max-age=10", "private, max-age=10"],
+    ["no-store", "no-store"],
+    ["public, s-maxage=600", "public, max-age=0, must-revalidate"],
+  ])("keeps browser policy %s separate from the edge", (browserCacheControl, expected) => {
+    const headers = adapter.buildResponseHeaders({
+      cacheControl: "max-age=3600",
+      browserCacheControl,
+    });
+    expect(headers["Cache-Control"]).toBe(expected);
+    expect(headers["Cloudflare-CDN-Cache-Control"]).toBe("public, max-age=3600");
+    expect(headers["CDN-Cache-Control"]).toBeNull();
+  });
+
+  it("does not let a browser policy bypass failed edge admission", () => {
+    for (const input of [
+      { cacheControl: "" },
+      { cacheControl: "no-store" },
+      { cacheControl: "max-age=3600", pendingDynamicCheck: true },
+    ]) {
+      const headers = adapter.buildResponseHeaders({ ...input, browserCacheControl: "max-age=10" });
+      expect(headers["Cache-Control"]).toBe("no-store");
+      expect(headers["Cloudflare-CDN-Cache-Control"]).toBeNull();
+    }
+  });
+
+  it("uses s-maxage for the edge when an endpoint also sets browser max-age", () => {
+    const policy = "public, max-age=10, s-maxage=3600, stale-while-revalidate=60";
+    const headers = adapter.buildResponseHeaders({
+      cacheControl: policy,
+      browserCacheControl: policy,
+    });
+    expect(headers["Cache-Control"]).toBe("public, max-age=10");
+    expect(headers["Cloudflare-CDN-Cache-Control"]).toBe(
+      "public, max-age=3600, stale-while-revalidate=60",
+    );
+  });
+
   it("adds a Cache-Tag header from the page tags", () => {
     const headers = adapter.buildResponseHeaders({
       cacheControl: "s-maxage=60",

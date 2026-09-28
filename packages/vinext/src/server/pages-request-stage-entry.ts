@@ -45,6 +45,7 @@ import { resolveResponseStageCachePolicy } from "./config-headers.js";
 import {
   applyCdnResponseIdentityHeaders,
   captureCdnResponsePolicyOverrides,
+  isCdnResponsePolicyHeader,
   reconcileCdnResponseHeadersAfterOuterPolicy,
   validateCdnRequest,
 } from "./cache-control.js";
@@ -313,6 +314,7 @@ async function handleRequestImpl(
     }
 
     let responseStageDispatched = false;
+    let didMiddlewareRewrite = false;
     const trackedDispatchResponseStage: PagesStageRuntimeDispatch = (
       stageRequest,
       props,
@@ -321,7 +323,26 @@ async function handleRequestImpl(
       stageCtx,
     ) => {
       responseStageDispatched = true;
-      return dispatchResponseStage(stageRequest, props, options, stageEnv, stageCtx);
+      const resolvedUrl =
+        props.kind === "pages-api"
+          ? props.apiUrl
+          : props.kind === "pages-page"
+            ? props.resolvedUrl
+            : request.url;
+      const requiresBrowserRevalidation =
+        options.cache === "shared" &&
+        (didMiddlewareRewrite ||
+          new URL(resolvedUrl, request.url).href !== request.url ||
+          props.stagedHeaders?.some(
+            ([name]) => name.toLowerCase() !== "vary" && !isCdnResponsePolicyHeader(name),
+          ));
+      return dispatchResponseStage(
+        stageRequest,
+        props,
+        requiresBrowserRevalidation ? { ...options, requiresBrowserRevalidation: true } : options,
+        stageEnv,
+        stageCtx,
+      );
     };
 
     if (!didValidateCdnRequest) {
@@ -452,7 +473,15 @@ async function handleRequestImpl(
       matchPageRoute: typeof matchPageRoute === "function" ? matchPageRoute : null,
       runMiddleware:
         typeof runMiddleware === "function"
-          ? wrapMiddlewareWithBasePath(runMiddleware, basePath, hadBasePath)
+          ? wrapMiddlewareWithBasePath(
+              async (...args) => {
+                const result = await runMiddleware(...args);
+                didMiddlewareRewrite = Boolean(result.rewriteUrl);
+                return result;
+              },
+              basePath,
+              hadBasePath,
+            )
           : null,
       renderPage: (req, resolvedUrl, options, stagedHeaders) => {
         if (options?.renderErrorPageOnMiss === false && req.body !== null && !req.bodyUsed) {

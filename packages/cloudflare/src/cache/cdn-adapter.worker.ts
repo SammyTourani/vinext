@@ -58,6 +58,12 @@ type CloudflareResponseInit = ResponseInit & {
   webSocket?: WebSocket | null;
 };
 
+type SharedResponseStage = {
+  headers: Headers;
+  status: number;
+  requiresBrowserRevalidation: boolean;
+};
+
 const CACHED_RESPONSE_STAGE_EXPORT = "VinextCachedResponse";
 const UNCACHED_RESPONSE_STAGE_EXPORT = "VinextUncachedResponse";
 const AUTHORIZATION_TRANSPORT_HEADER = "x-vinext-internal-authorization";
@@ -422,15 +428,45 @@ function markSharedResponseStage(
   );
 }
 
-function finalizeGatewayResponse(response: Response, provenanceToken: string): Response {
+function finalizeGatewayResponse(
+  response: Response,
+  sharedResponses: Map<string, SharedResponseStage>,
+): Response {
   const provenance = response.headers.get(SHARED_RESPONSE_STAGE_HEADER);
-  const usedSharedResponseStage =
-    provenance === provenanceToken || provenance?.startsWith(`${provenanceToken}:`) === true;
+  const sharedResponse = provenance === null ? undefined : sharedResponses.get(provenance);
+  const usedSharedResponseStage = sharedResponse !== undefined;
   // The marker is reserved for adapter-internal provenance. If outer response
   // composition replaces it, fail closed rather than forwarding shared cache
   // policy on a response whose origin can no longer be authenticated.
   const sharedResponseStageCollision = provenance !== null && !usedSharedResponseStage;
   const cacheControl = response.headers.get("Cache-Control");
+  // Adding Vary selectors (including App Router's framework selectors) only
+  // narrows downstream reuse. Every other header and the status must survive
+  // unchanged before the gateway can retain an explicit browser lifetime.
+  const vary = new Set(
+    (response.headers.get("Vary") ?? "")
+      .toLowerCase()
+      .split(",")
+      .map((name) => name.trim()),
+  );
+  const preservesBrowserPolicy =
+    sharedResponse !== undefined &&
+    !sharedResponse.requiresBrowserRevalidation &&
+    cacheControl !== null &&
+    cacheControl !== "public, max-age=0, must-revalidate" &&
+    !response.headers.has("Set-Cookie") &&
+    response.status === sharedResponse.status &&
+    [...response.headers].every(
+      ([name, value]) => name === "vary" || sharedResponse.headers.get(name) === value,
+    ) &&
+    [...sharedResponse.headers].every(([name, value]) =>
+      name === "vary"
+        ? value
+            .toLowerCase()
+            .split(",")
+            .every((field) => vary.has(field.trim()))
+        : response.headers.get(name) === value,
+    );
   if (
     !response.headers.has(CLOUDFLARE_EDGE_POLICY_HEADER) &&
     !usedSharedResponseStage &&
@@ -446,12 +482,22 @@ function finalizeGatewayResponse(response: Response, provenanceToken: string): R
     headers.delete("Cache-Tag");
     headers.delete(VINEXT_CACHE_HEADER);
     headers.delete(NEXTJS_CACHE_HEADER);
-    if (!cacheControl || !isNonCacheableCacheControl(cacheControl)) {
+    // The full invocation identity is private to Workers Cache. Even when
+    // this request is unchanged, another visitor can take a different branch
+    // through middleware, so downstream shared caches must never reuse it.
+    if (preservesBrowserPolicy && cacheControl && !isNonCacheableCacheControl(cacheControl)) {
+      const directives = cacheControl.split(",").map((directive) => directive.trim());
+      headers.set(
+        "Cache-Control",
+        ["private", ...directives.filter((directive) => !/^public$/i.test(directive))].join(", "),
+      );
+    }
+    if (!preservesBrowserPolicy && !isNonCacheableCacheControl(cacheControl ?? "", "browser")) {
       headers.set("Cache-Control", "private, max-age=0, must-revalidate");
     }
   }
-  if (usedSharedResponseStage && provenance?.startsWith(`${provenanceToken}:`)) {
-    const cacheStatus = decodeURIComponent(provenance.slice(provenanceToken.length + 1));
+  const cacheStatus = sharedResponse?.headers.get("CF-Cache-Status");
+  if (cacheStatus) {
     headers.set(VINEXT_CACHE_HEADER, cacheStatus);
     headers.set(NEXTJS_CACHE_HEADER, cacheStatus);
   }
@@ -655,7 +701,7 @@ export default {
     context: CloudflareStageContext | undefined,
   ): Promise<Response> {
     request = stripUntrustedTransportHeaders(request);
-    const sharedResponseStageProvenance = crypto.randomUUID();
+    const sharedResponses = new Map<string, SharedResponseStage>();
     const stageContext = withResponseStagePurge(withWorkerHostRuntime(context, env));
     const dispatchResponseStage: VinextResponseStageTransport = async (
       stageRequest,
@@ -696,9 +742,14 @@ export default {
           ? await createCacheFacingRequest(stageRequest, serializedInvocation)
           : stageRequest;
         const response = validateResponseStageBuildIdentity(await binding.fetch(entrypointRequest));
-        return usesSharedCache
-          ? markSharedResponseStage(response, sharedResponseStageProvenance, props, true)
-          : response;
+        if (!usesSharedCache) return response;
+        const shared = markSharedResponseStage(response, crypto.randomUUID(), props, true);
+        sharedResponses.set(shared.headers.get(SHARED_RESPONSE_STAGE_HEADER)!, {
+          headers: new Headers(shared.headers),
+          status: shared.status,
+          requiresBrowserRevalidation: options.requiresBrowserRevalidation === true,
+        });
+        return shared;
       } catch (error) {
         if (isResponseStageReadinessRequest(stageRequest)) return responseStageUnavailable();
         throw error;
@@ -707,7 +758,7 @@ export default {
     const { handleRequestStage } = await loadVinextRequestStage<unknown, CloudflareStageContext>();
     return finalizeGatewayResponse(
       await handleRequestStage(request, env, stageContext, dispatchResponseStage),
-      sharedResponseStageProvenance,
+      sharedResponses,
     );
   },
 };
