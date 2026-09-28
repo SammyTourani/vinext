@@ -164,6 +164,17 @@ test.describe("Cloudflare route-handler draft-mode cache isolation", () => {
     }
   });
 
+  test("revalidates browser reuse for conditional config policies", async ({ request }) => {
+    for (const plan of ["pro", "basic"]) {
+      const response = await request.get(`${BASE_URL}/api/browser-cache-conditional`, {
+        headers: { "x-plan": plan },
+      });
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ browserCache: true });
+      expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+    }
+  });
+
   test("does not cache a middleware draft transition on an ISR MISS", async ({ request }) => {
     await setDraftMode(request, false);
     const scenario = `middleware-miss-${Date.now()}`;
@@ -466,5 +477,16 @@ test.describe("Cloudflare Pages-only completed-response admission", () => {
     expect(response.headers()["cdn-cache-control"]).toBeUndefined();
     expect(response.headers()["cloudflare-cdn-cache-control"]).toBeUndefined();
     expect(response.headers()["cache-tag"]).toBeUndefined();
+  });
+
+  test("revalidates Pages browser reuse for conditional config policies", async ({ request }) => {
+    for (const plan of ["pro", "basic"]) {
+      const response = await request.get(`${pagesBaseUrl}/api/browser-cache-pages-conditional`, {
+        headers: { "x-plan": plan },
+      });
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ browserCache: true });
+      expect(response.headers()["cache-control"]).toBe("private, max-age=0, must-revalidate");
+    }
   });
 });

@@ -1129,6 +1129,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
     resolvedRoutePathname: pathnameForResolvedUrl(resolvedRouteUrl),
   });
   let responseStagePolicyPromise: Promise<Array<[string, string]> | null> | undefined;
+  let hasRequestDependentConfigHeaders = false;
   const loadResponseStagePolicy = () =>
     (responseStagePolicyPromise ??= options.configHeaders.length
       ? import("./config-headers.js").then(({ resolveResponseStageCachePolicy }) =>
@@ -1138,6 +1139,9 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
               configHeaders: options.configHeaders,
               pathname: matchPathname(requestCleanPathname),
               requestContext: preMiddlewareRequestContext,
+              onRequestDependentRule: () => {
+                hasRequestDependentConfigHeaders = true;
+              },
             }),
           ),
         )
@@ -1255,6 +1259,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
             ...(cacheIdentity ? { cacheIdentity } : {}),
             ...(cache === "shared" &&
             (didMiddlewareRewrite ||
+              hasRequestDependentConfigHeaders ||
               ("resolvedUrl" in props && props.resolvedUrl !== originalResolvedUrl))
               ? { requiresBrowserRevalidation: true }
               : {}),
@@ -1976,6 +1981,7 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
               cache,
               ...(cache === "shared" &&
               (didMiddlewareRewrite ||
+                hasRequestDependentConfigHeaders ||
                 resolvedUrl !== originalResolvedUrl ||
                 preHandlerHeaders?.some(
                   ([name]) => name.toLowerCase() !== "vary" && !isCdnResponsePolicyHeader(name),

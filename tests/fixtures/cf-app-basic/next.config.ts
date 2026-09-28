@@ -3,6 +3,13 @@ import type { NextConfig } from "vinext";
 const nextConfig: NextConfig = {
   async headers() {
     return [
+      ...["/api/browser-cache-conditional", "/api/browser-cache-pages-conditional"].map(
+        (source) => ({
+          source,
+          has: [{ type: "header" as const, key: "x-plan", value: "pro" }],
+          headers: [{ key: "Cache-Control", value: "max-age=300" }],
+        }),
+      ),
       {
         source: "/api/browser-cache-config",
         headers: [

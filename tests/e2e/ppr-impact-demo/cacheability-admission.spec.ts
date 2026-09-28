@@ -1,7 +1,7 @@
 import { expect, test, type APIResponse } from "@playwright/test";
 
-function expectGatewayCachePolicy(response: APIResponse): void {
-  expect(response.headers()["cache-control"]).toContain("must-revalidate");
+function expectGatewayCachePolicy(response: APIResponse, browserPolicy = "must-revalidate"): void {
+  expect(response.headers()["cache-control"]).toContain(browserPolicy);
   expect(response.headers()["cache-control"]).not.toContain("no-store");
   expect(response.headers()["cdn-cache-control"]).toBeUndefined();
   expect(response.headers()["cloudflare-cdn-cache-control"]).toBeUndefined();
@@ -241,7 +241,12 @@ test("admits pattern-backed App responses only after each clean EOF", async ({ r
   expect(explicitMetadataRoute.status()).toBe(200);
   expect(explicitMetadataRoute.headers()["content-type"]).toBe("image/png");
   expect(await explicitMetadataRoute.text()).toBe("metadata-image");
-  expectGatewayCachePolicy(explicitMetadataRoute);
+  // Its explicitly authored browser lifetime survives Workers Cache admission,
+  // while the gateway keeps downstream shared caches out of request routing.
+  expectGatewayCachePolicy(
+    explicitMetadataRoute,
+    "private, immutable, no-transform, max-age=31536000",
+  );
 
   // `revalidate` alone is framework policy, not an explicit response-level
   // opt-in, and must not bypass the route's manifest absence.

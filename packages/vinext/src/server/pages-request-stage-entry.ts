@@ -315,6 +315,7 @@ async function handleRequestImpl(
 
     let responseStageDispatched = false;
     let didMiddlewareRewrite = false;
+    let hasRequestDependentConfigHeaders = false;
     const trackedDispatchResponseStage: PagesStageRuntimeDispatch = (
       stageRequest,
       props,
@@ -332,6 +333,7 @@ async function handleRequestImpl(
       const requiresBrowserRevalidation =
         options.cache === "shared" &&
         (didMiddlewareRewrite ||
+          hasRequestDependentConfigHeaders ||
           new URL(resolvedUrl, request.url).href !== request.url ||
           props.stagedHeaders?.some(
             ([name]) => name.toLowerCase() !== "vary" && !isCdnResponsePolicyHeader(name),
@@ -439,6 +441,9 @@ async function handleRequestImpl(
       ? normalizeDefaultLocalePathname(pathname, i18nConfig, { hostname: url.hostname })
       : pathname;
     const responseStagePolicyHeaders = resolveResponseStageCachePolicy({
+      onRequestDependentRule: () => {
+        hasRequestDependentConfigHeaders = true;
+      },
       basePathState: { basePath, hadBasePath },
       configHeaders,
       pathname: responseStagePolicyPathname,
