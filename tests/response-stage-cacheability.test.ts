@@ -703,7 +703,7 @@ describe("response-stage metadata route admission", () => {
       expect(state?.route).toEqual({ kind: "app-route", pattern: PATTERN });
       expect(response.status).toBe(200);
       expect(response.headers.get("Cloudflare-CDN-Cache-Control")).toBe(YEAR);
-      expect(response.headers.get("Cache-Control")).toBe("public, max-age=0, must-revalidate");
+      expect(response.headers.get("Cache-Control")).toBe(YEAR);
       expect(response.headers.get("Content-Type")).toBe("image/png");
       await expect(response.text()).resolves.toBe("png-bytes");
     },
