@@ -900,12 +900,17 @@ describe("Cloudflare CDN multi-stage Worker facade", () => {
     await expect(response.text()).resolves.toBe("shared");
   });
 
-  it.each(["MISS", "HIT"])("preserves browser policy on an unchanged %s", async (cacheStatus) => {
+  it.each([
+    ["MISS", "max-age=10"],
+    ["HIT", "max-age=10"],
+    ["MISS", "private, max-age=10"],
+    ["HIT", "private, max-age=10"],
+  ])("preserves browser policy on an unchanged %s with %s", async (cacheStatus, cacheControl) => {
     const binding = vi.fn(() => ({
       fetch: vi.fn().mockResolvedValue(
         new Response("shared", {
           headers: {
-            "Cache-Control": "max-age=10",
+            "Cache-Control": cacheControl,
             "Cloudflare-CDN-Cache-Control": "public, max-age=3600",
             "CF-Cache-Status": cacheStatus,
           },
