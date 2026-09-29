@@ -3214,6 +3214,14 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           // Disable Vite's default HTML serving - we handle all routing
           appType: "custom",
           ...(devCliLifecycleEnabled ? { [VINEXT_DEV_CLI_LIFECYCLE]: true } : {}),
+          // Nitro serves requests itself and replaces the `rsc` dev environment
+          // with one that has no module runner. Turn off @vitejs/plugin-rsc's
+          // dev and preview request handlers, as Nitro's Vite RSC example does
+          // with `rsc({ serverHandler: false })`. Otherwise requests Nitro passes
+          // on crash in `environment.runner.import()` (#853), and `vite preview`
+          // tries to import an RSC build from dist/server that Nitro never writes.
+          // @cloudflare/vite-plugin sets the same option through `config.rsc`.
+          ...(hasAppDir && hasNitroPlugin ? { rsc: { serverHandler: false as const } } : {}),
           // Cloudflare Pages builds need the shared builder configuration;
           // plain Pages builds add it after user config hooks determine whether
           // this is an application build or a single-environment target.

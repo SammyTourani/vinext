@@ -228,6 +228,79 @@ describe("RSC plugin auto-registration", () => {
     ).toBe(false);
     expect(await encryptionKeyPlugin!.applyToEnvironment!({ name: "rsc" } as never)).toBe(true);
   });
+
+  // Nitro runs the rsc environment in its own worker and serves requests
+  // itself, so its Vite RSC example registers rsc({ serverHandler: false }).
+  // vinext registers rsc() for the user and must pass the same option (#853).
+  it("turns off the RSC plugin's request handlers when Nitro is present", async () => {
+    const { createServer, DevEnvironment, preview } = await import("vite");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vinext-nitro-rsc-"));
+    let nitroServer: ViteDevServer | undefined;
+    try {
+      fs.mkdirSync(path.join(tmpDir, "app"));
+      fs.writeFileSync(
+        path.join(tmpDir, "app", "layout.tsx"),
+        "export default function RootLayout({ children }) { return <html><body>{children}</body></html>; }",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "app", "page.tsx"),
+        "export default function Home() { return <h1>Home</h1>; }",
+      );
+      fs.symlinkSync(
+        path.resolve(__dirname, "..", "node_modules"),
+        path.join(tmpDir, "node_modules"),
+        "junction",
+      );
+
+      // Stand-in for nitro/vite: vinext detects Nitro by plugin name, and Nitro
+      // replaces the rsc dev environment with one that has no module runner.
+      const nitroStandIn: Plugin = {
+        name: "nitro:env",
+        configEnvironment(name) {
+          if (name !== "rsc") return;
+          return {
+            dev: {
+              createEnvironment: (envName, config) =>
+                new DevEnvironment(envName, config, { hot: false }),
+            },
+          };
+        },
+      };
+
+      // Nitro previews its own build output. The RSC plugin's preview handler
+      // used to import dist/server/index.js, which a Nitro build never writes,
+      // so `vite preview` failed to start.
+      const previewServer = await preview({
+        root: tmpDir,
+        configFile: false,
+        plugins: [vinext({ appDir: tmpDir }), nitroStandIn],
+        preview: { port: 0 },
+        logLevel: "silent",
+      });
+      await previewServer.close();
+
+      nitroServer = await createServer({
+        root: tmpDir,
+        cacheDir: path.join(tmpDir, ".vite"),
+        configFile: false,
+        plugins: [vinext({ appDir: tmpDir }), nitroStandIn],
+        server: { port: 0, cors: false },
+        logLevel: "silent",
+      });
+      await nitroServer.listen();
+      const address = nitroServer.httpServer?.address();
+      const url = address && typeof address === "object" ? `http://localhost:${address.port}` : "";
+
+      // Nitro leaves requests for assets it does not serve to Vite. The RSC
+      // plugin's handler used to take them and fail with a 500 in
+      // `environment.runner.import()`.
+      const res = await fetch(`${url}/missing.png`);
+      expect(res.status).toBe(404);
+    } finally {
+      await nitroServer?.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 // ── External rewrite proxy credential forwarding (App Router) ────────────────
