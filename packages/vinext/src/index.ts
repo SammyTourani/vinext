@@ -6631,6 +6631,7 @@ export const loadServerActionClient = ${
               ): "static" | "server" | "none" => classifyDevPageFile(route.filePath);
 
               const pipelineDeps: PagesPipelineDeps = {
+                assetPrefix: nextConfig?.assetPrefix,
                 basePath: bp,
                 trailingSlash: nextConfig?.trailingSlash ?? false,
                 i18nConfig: nextConfig?.i18n ?? null,

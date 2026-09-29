@@ -24,9 +24,7 @@ import { onRenderDynamicLatched } from "vinext/shims/headers";
 import { createClientPageSsrSearchParamsSource } from "./app-page-search-params-observation.js";
 import { runWithRootParamsScope, type RootParams } from "vinext/shims/root-params";
 import { isOpenRedirectShaped } from "./open-redirect.js";
-import { notFoundResponse, notFoundStaticAssetResponse } from "./http-error-responses.js";
-import { finalizeMissingStaticAssetResponse } from "./worker-utils.js";
-import { assetPrefixPathname, isNextStaticPath } from "../utils/asset-prefix.js";
+import { notFoundResponse } from "./http-error-responses.js";
 import { withScriptNonce } from "vinext/shims/script-nonce-context";
 import {
   BeforeInteractiveContext,
@@ -872,25 +870,15 @@ export default {
 
     const rscModule = await import.meta.viteRsc.loadModule<{
       default(request: Request): Promise<Response | string | null | undefined>;
-      __assetPrefix: string;
-      __basePath: string;
     }>("rsc", "index");
-    // The host (e.g. Nitro) serves emitted build assets before this handler
-    // runs, so an asset-shaped request here is a miss. It still reaches
-    // middleware; a final 404 becomes the plain-text static-file response.
-    const missingBuildAsset = isNextStaticPath(
-      url.pathname,
-      rscModule.__basePath,
-      assetPrefixPathname(rscModule.__assetPrefix),
-    );
     const result = await rscModule.default(request);
 
     if (result instanceof Response) {
-      return finalizeMissingStaticAssetResponse(result, missingBuildAsset);
+      return result;
     }
 
     if (result == null) {
-      return missingBuildAsset ? notFoundStaticAssetResponse() : notFoundResponse();
+      return notFoundResponse();
     }
 
     return new Response(String(result), { status: 200 });

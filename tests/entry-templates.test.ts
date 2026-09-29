@@ -1605,6 +1605,7 @@ describe("App Router entry templates", () => {
       /import \{ createAppRscHandler \} from "[^"]*app-rsc-combined-handler\.[jt]s";/,
     );
     expect(code).toContain("const __appRscHandler = createAppRscHandler({");
+    expect(code).toContain("assetPrefix: __assetPrefix,");
     expect(code).toContain("export default __appRscHandler;");
     expect(code).not.toContain("computeRscCacheBustingSearchParam(");
   });

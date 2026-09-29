@@ -82,7 +82,12 @@ import {
 import { normalizeRscRequest } from "./app-rsc-request-normalization.js";
 import { buildNextDataNotFoundResponse, normalizePagesDataRequest } from "./pages-data-route.js";
 import { normalizeDefaultLocalePathname } from "./pages-i18n.js";
-import { badRequestResponse, notFoundResponse } from "./http-error-responses.js";
+import {
+  badRequestResponse,
+  notFoundResponse,
+  notFoundStaticAssetResponse,
+} from "./http-error-responses.js";
+import { assetPrefixPathname, isNextStaticPath } from "../utils/asset-prefix.js";
 import {
   isOnDemandRevalidateRequest,
   PRERENDER_REVALIDATE_HEADER,
@@ -505,6 +510,7 @@ type NavigationContextValue = {
 };
 
 export type CreateAppRscHandlerOptions<TRoute extends AppRscHandlerRoute> = {
+  assetPrefix?: string;
   basePath: string;
   buildId: string | null;
   /**
@@ -2176,6 +2182,20 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
     }
     bypassInterceptionContextCache = !hasVerifiedFinalInterceptionSource;
     setInterceptionResponseUncacheable(bypassInterceptionContextCache);
+  }
+
+  // Classify the resolved, unmatched path after middleware and rewrites.
+  // An explicit middleware/route 404 or a rewrite to a missing page keeps its
+  // own response, matching Next.js's router-server.ts static-asset fallback.
+  if (
+    (!filesystemRouteEligible || !match) &&
+    isNextStaticPath(cleanPathname, "", assetPrefixPathname(options.assetPrefix ?? ""))
+  ) {
+    options.clearRequestContext();
+    const headers = new Headers();
+    mergeMiddlewareResponseHeaders(headers, middlewareContext.headers);
+    applyCdnResponseHeaders(headers, { cacheControl: NEVER_CACHE_CONTROL });
+    return notFoundStaticAssetResponse(headers);
   }
 
   if (!filesystemRouteEligible) {

@@ -431,6 +431,31 @@ describe("App Router on Nitro invalid `_next/static/*` 404", () => {
 `,
       );
 
+      const routePrefix = pagePath.slice(0, -"/invalid-path".length);
+      fs.writeFileSync(
+        path.join(root, "middleware.ts"),
+        `import { NextResponse } from "next/server";
+export function middleware(request) {
+  const pathname = request.nextUrl.pathname;
+  if (pathname.endsWith("/middleware-404")) {
+    return NextResponse.json({ error: "middleware not found" }, { status: 404 });
+  }
+  if (pathname.endsWith("/rewrite-missing")) {
+    return NextResponse.rewrite(new URL(${JSON.stringify(pagePath)}, request.url));
+  }
+  if (pathname.endsWith("/rewrite-asset")) {
+    return NextResponse.rewrite(new URL(${JSON.stringify(assetPath)}, request.url));
+  }
+  if (pathname.endsWith("/rewrite-ok")) {
+    return NextResponse.rewrite(new URL(${JSON.stringify(routePrefix + "/")}, request.url));
+  }
+  const response = NextResponse.next();
+  response.headers.set("x-static-middleware", "ran");
+  return response;
+}
+`,
+      );
+
       const nitroModule = (await import(
         pathToFileURL(path.join(NITRO_NODE_MODULES, "nitro/dist/vite.mjs")).href
       )) as { nitro(config?: Record<string, unknown>): Plugin[] };
@@ -452,6 +477,28 @@ describe("App Router on Nitro invalid `_next/static/*` 404", () => {
         expect(res.status).toBe(404);
         expect(res.headers.get("content-type")).toMatch(/^text\/plain/);
         expect(await res.text()).toBe("Not Found");
+        expect(res.headers.get("x-static-middleware")).toBe("ran");
+
+        // Next.js resolves middleware and rewrites before classifying an
+        // unmatched pathname as a static-asset miss (router-server.ts).
+        const assetRoot = assetPath.slice(0, -"invalid-path".length);
+        const middleware404 = await fetch(`${baseUrl}${assetRoot}middleware-404`);
+        expect(middleware404.status).toBe(404);
+        expect(middleware404.headers.get("content-type")).toMatch(/^application\/json/);
+        expect(await middleware404.json()).toEqual({ error: "middleware not found" });
+
+        const rewritten404 = await fetch(`${baseUrl}${assetRoot}rewrite-missing`);
+        expect(rewritten404.status).toBe(404);
+        expect(rewritten404.headers.get("content-type")).toMatch(/^text\/html/);
+        expect(await rewritten404.text()).toContain("Custom Not Found");
+
+        const rewrittenAsset = await fetch(`${baseUrl}${routePrefix}/rewrite-asset`);
+        expect(rewrittenAsset.status).toBe(404);
+        expect(await rewrittenAsset.text()).toBe("Not Found");
+
+        const rewrittenPage = await fetch(`${baseUrl}${assetRoot}rewrite-ok`);
+        expect(rewrittenPage.status).toBe(200);
+        expect(await rewrittenPage.text()).toContain("hello world");
 
         const htmlRes = await fetch(`${baseUrl}${pagePath}`);
         expect(htmlRes.status).toBe(404);
