@@ -388,10 +388,6 @@ const APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE = Object.freeze([
   "use-sync-external-store/with-selector.js",
 ]);
 
-// Only quiet our optional entries. Explicit nested includes and other
-// resolution/optimization failures still need to reach the application's logger.
-const OPTIONAL_OPTIMIZE_DEPS_WARNING_RE =
-  /^Failed to resolve dependency: use-sync-external-store\/(?:shim(?:\/index\.js|\/with-selector(?:\.js)?)?|with-selector(?:\.js)?), present in .+ 'optimizeDeps\.include'$/;
 const VINEXT_FILTERED_OPTIMIZE_DEPS_WARN = Symbol.for("vinext.filteredOptimizeDepsWarn");
 const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 const RSC_ENVIRONMENTS = new Set(["rsc", "ssr", "client"]);
@@ -1047,16 +1043,13 @@ function stripAnsi(value: string): string {
   return value.replace(ANSI_ESCAPE_RE, "");
 }
 
-function suppressOptionalOptimizeDepsWarnings(logger: Logger): void {
-  const marker = logger as Logger & { [VINEXT_FILTERED_OPTIMIZE_DEPS_WARN]?: true };
-  if (marker[VINEXT_FILTERED_OPTIMIZE_DEPS_WARN]) return;
-
-  const warn = logger.warn.bind(logger);
+function suppressOptionalOptimizeDepsWarnings(logger: Logger, warnings: ReadonlySet<string>): void {
+  const marker = logger as Logger & { [VINEXT_FILTERED_OPTIMIZE_DEPS_WARN]?: Logger["warn"] };
+  const warn = (marker[VINEXT_FILTERED_OPTIMIZE_DEPS_WARN] ??= logger.warn.bind(logger));
   logger.warn = (msg, options) => {
-    if (OPTIONAL_OPTIMIZE_DEPS_WARNING_RE.test(stripAnsi(msg))) return;
+    if (warnings.has(stripAnsi(msg))) return;
     warn(msg, options);
   };
-  marker[VINEXT_FILTERED_OPTIMIZE_DEPS_WARN] = true;
 }
 
 // Cache materialized tsconfig/jsconfig aliases so Vite's glob and dynamic-import
@@ -1660,6 +1653,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
   let pagesTsconfigAliases: Record<string, string> = {};
   let pagesBundledPackages = new Set<string>();
   let isServeCommand = false;
+  const optionalOptimizeDepsWarnings = new Set<string>();
   let buildEmptyOutDir: boolean | undefined;
   let buildLifecycleEnabled = false;
   let hasPlainPagesBuildEnvironments = false;
@@ -2462,6 +2456,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
         buildEmptyOutDir =
           typeof config.build?.emptyOutDir === "boolean" ? config.build.emptyOutDir : undefined;
         isServeCommand = env.command === "serve";
+        optionalOptimizeDepsWarnings.clear();
         root = path.resolve(toSlash(process.cwd()), config.root ?? ".");
         const devCliLifecycleEnabled =
           env.command === "serve" &&
@@ -3828,6 +3823,17 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     ),
                 )
               : [];
+          const explicitClientIncludes = [
+            ...incomingInclude,
+            ...(config.environments?.client?.optimizeDeps?.include ?? []),
+          ];
+          for (const id of optionalClientOptimizeIncludes) {
+            if (!explicitClientIncludes.includes(id)) {
+              optionalOptimizeDepsWarnings.add(
+                `Failed to resolve dependency: ${id}, present in client 'optimizeDeps.include'`,
+              );
+            }
+          }
           const appClientInput: Record<string, string> = { index: VIRTUAL_APP_BROWSER_ENTRY };
           if (hasPagesDir) {
             appClientInput["vinext-client-entry"] = VIRTUAL_CLIENT_ENTRY;
@@ -4187,6 +4193,11 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
             config.optimizeDeps.entries,
             pagesOptimizeEntries,
           );
+          if (!config.optimizeDeps.include?.includes("use-sync-external-store/with-selector")) {
+            optionalOptimizeDepsWarnings.add(
+              `Failed to resolve dependency: use-sync-external-store/with-selector, present in ${name} 'optimizeDeps.include'`,
+            );
+          }
           config.optimizeDeps.include = mergeStringArrayValues(
             config.optimizeDeps.include,
             PAGES_CLOUDFLARE_WORKER_OPTIMIZE_DEPS_INCLUDE,
@@ -4232,7 +4243,9 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           }
         }
         if (isServeCommand && (hasAppDir || (hasCloudflarePlugin && hasPagesDir))) {
-          suppressOptionalOptimizeDepsWarnings(config.logger);
+          // Only quiet entries we added in this environment. Explicit includes
+          // and failures in other environments remain actionable warnings.
+          suppressOptionalOptimizeDepsWarnings(config.logger, optionalOptimizeDepsWarnings);
         }
 
         // Keep worker entries and code-split chunks in a distinct output
