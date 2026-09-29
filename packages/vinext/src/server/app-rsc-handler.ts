@@ -814,7 +814,12 @@ async function handleAppRscRequest<TRoute extends AppRscHandlerRoute>(
       ...options.configRewrites.fallback,
       ...options.configHeaders,
     ].some((rule) => rule.basePath === false);
-  const normalized = normalizeRscRequest(request, options.basePath, canHandleOutsideBasePath);
+  const normalized = normalizeRscRequest(
+    request,
+    options.basePath,
+    canHandleOutsideBasePath,
+    options.assetPrefix,
+  );
   if (normalized instanceof Response) {
     if (
       request.headers.has(VINEXT_INTERCEPTION_CONTEXT_HEADER) ||

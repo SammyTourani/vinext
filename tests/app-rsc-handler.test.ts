@@ -295,7 +295,7 @@ describe("createAppRscHandler", () => {
       const handler = createHandler({ assetPrefix, renderNotFound });
       const prefix = assetPrefix ? "/assets" : "";
       const response = await handler(
-        new Request(`https://example.test/docs${prefix}/_next/static/missing.js`),
+        new Request(`https://example.test${prefix || "/docs"}/_next/static/missing.js`),
         null,
       );
       expect(response.status).toBe(404);

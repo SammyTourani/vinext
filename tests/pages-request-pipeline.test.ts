@@ -71,6 +71,19 @@ async function cacheabilityReasonFor(
 // Ported from Next.js: test/e2e/invalid-static-asset-404-pages
 // https://github.com/vercel/next.js/tree/canary/test/e2e/invalid-static-asset-404-pages
 describe("missing static assets after routing", () => {
+  it("does not cache missing assets outside basePath", async () => {
+    const result = await runPagesRequest(
+      makeRequest("/cdn/_next/static/missing.js"),
+      baseDeps({
+        basePath: "/app",
+        assetPrefix: "/cdn",
+        hadBasePath: false,
+      }),
+    );
+    if (result.type !== "response") throw new Error("expected response");
+    expect(result.response.status).toBe(404);
+    expect(result.response.headers.get("cache-control")).toContain("no-store");
+  });
   it.each([false, true])(
     "preserves terminal middleware 404s (render adapter: %s)",
     async (render) => {
@@ -112,8 +125,9 @@ describe("missing static assets after routing", () => {
               }),
             }),
           );
-          if (!render && !staticMiss) {
+          if (!render) {
             expect(result.type).toBe("render");
+            if (result.type === "render") expect(result.resolvedUrl).toBe(destination);
             continue;
           }
           expect(result.type).toBe("response");

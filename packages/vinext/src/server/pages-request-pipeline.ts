@@ -1025,12 +1025,6 @@ export async function runPagesRequest(
   const prefetchSkipResult = buildMiddlewarePrefetchSkipResult(devPageMatch);
   if (prefetchSkipResult) return prefetchSkipResult;
   if (isOutsideBasePathUnclaimed()) return outOfBasePathNotFound();
-  if (!devPageMatch && isMissingBuildAsset()) {
-    return {
-      type: "response",
-      response: notFoundStaticAssetResponse(headersFromRecord(middlewareHeaders)),
-    };
-  }
   refreshDataRewriteHeader();
   if (devPageMatch) setFrameworkRequestRoute(matchedPathnameForRoute(devPageMatch.route.pattern));
 
