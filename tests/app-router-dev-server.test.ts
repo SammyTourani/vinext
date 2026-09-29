@@ -2676,6 +2676,22 @@ describe("optional external store dependency warnings", () => {
         await server.environments.client.depsOptimizer?.scanProcessing;
         if (laterHook === "none") {
           expect(warnings).toEqual([]);
+          await server.close();
+          // The caller can reuse its logger for another server. Optional
+          // filtering must not hide that server's explicitly requested imports.
+          server = await createServer({
+            root,
+            configFile: false,
+            cacheDir: path.join(root, ".vite-logger-reuse"),
+            customLogger: logger,
+            optimizeDeps: { noDiscovery: true, include: ["use-sync-external-store/shim"] },
+            server: { host: "127.0.0.1", port: 0 },
+          });
+          await server.listen();
+          await server.environments.client.depsOptimizer?.scanProcessing;
+          expect(warnings).toContain(
+            "Failed to resolve dependency: use-sync-external-store/shim, present in client 'optimizeDeps.include'",
+          );
         } else {
           expect(warnings.length).toBeGreaterThan(0);
           for (const warning of warnings) {

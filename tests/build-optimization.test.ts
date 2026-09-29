@@ -1129,14 +1129,15 @@ describe("optimizeDeps.exclude for vinext", () => {
           },
         };
 
-        await (mainPlugin as any).configResolved({
+        const resolvedConfig = {
           cacheDir: path.join(tmpDir, "node_modules", ".vite"),
           command: "serve",
           configFile: false,
           environments: { worker: workerConfig },
           logger,
           plugins: [],
-        });
+        };
+        await (mainPlugin as any).configResolved(resolvedConfig);
 
         const optionalWarnings = [
           "Failed to resolve dependency: use-sync-external-store/with-selector, present in worker 'optimizeDeps.include'",
@@ -1146,7 +1147,8 @@ describe("optimizeDeps.exclude for vinext", () => {
           "Failed to resolve dependency: other-package, present in worker 'optimizeDeps.include'",
           "Failed to resolve dependency: use-sync-external-store/with-selector, present in client 'optimizeDeps.include'",
         ];
-        for (const warning of [...optionalWarnings, ...actionableWarnings]) logger.warn(warning);
+        for (const warning of [...optionalWarnings, ...actionableWarnings])
+          resolvedConfig.logger.warn(warning);
 
         expect(warned).toEqual([...(explicit ? optionalWarnings : []), ...actionableWarnings]);
       } finally {
@@ -1232,14 +1234,15 @@ describe("optimizeDeps.exclude for vinext", () => {
           },
         };
 
-        await (mainPlugin as any).configResolved({
+        const resolvedConfig = {
           cacheDir: path.join(tmpDir, "node_modules", ".vite"),
           command: "serve",
           configFile: false,
           environments: { client: clientConfig },
           logger,
           plugins: [],
-        });
+        };
+        await (mainPlugin as any).configResolved(resolvedConfig);
 
         const expectedWarnings: string[] = [];
         for (const id of [
@@ -1252,7 +1255,7 @@ describe("optimizeDeps.exclude for vinext", () => {
         ]) {
           for (const specifier of [id, `\x1b[36m${id}\x1b[39m`]) {
             const warning = `Failed to resolve dependency: ${specifier}, present in client 'optimizeDeps.include'`;
-            logger.warn(warning);
+            resolvedConfig.logger.warn(warning);
             if (
               options.visibleClientIds === "all" ||
               options.visibleClientIds.some((visible) => visible === id)
@@ -1269,7 +1272,7 @@ describe("optimizeDeps.exclude for vinext", () => {
           "Failed to resolve dependency: other-package > use-sync-external-store/shim, present in client 'optimizeDeps.include'",
           "Cannot optimize dependency: use-sync-external-store/shim, present in client 'optimizeDeps.include'",
         ];
-        for (const warning of actionableWarnings) logger.warn(warning);
+        for (const warning of actionableWarnings) resolvedConfig.logger.warn(warning);
 
         expect(warned).toEqual([...expectedWarnings, ...actionableWarnings]);
       } finally {

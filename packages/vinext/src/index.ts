@@ -387,7 +387,6 @@ const APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE = Object.freeze([
   "use-sync-external-store/with-selector.js",
 ]);
 
-const VINEXT_FILTERED_OPTIMIZE_DEPS_WARN = Symbol.for("vinext.filteredOptimizeDepsWarn");
 const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 const RSC_ENVIRONMENTS = new Set(["rsc", "ssr", "client"]);
 const VINEXT_GENERATED_DIR_RE = /(?:^|[/\\])\.vinext(?:[/\\]|$)/;
@@ -1043,12 +1042,25 @@ function stripAnsi(value: string): string {
   return value.replace(ANSI_ESCAPE_RE, "");
 }
 
-function suppressOptionalOptimizeDepsWarnings(logger: Logger, warnings: ReadonlySet<string>): void {
-  const marker = logger as Logger & { [VINEXT_FILTERED_OPTIMIZE_DEPS_WARN]?: Logger["warn"] };
-  const warn = (marker[VINEXT_FILTERED_OPTIMIZE_DEPS_WARN] ??= logger.warn.bind(logger));
-  logger.warn = (msg, options) => {
-    if (warnings.has(stripAnsi(msg))) return;
-    warn(msg, options);
+function createOptionalOptimizeDepsLogger(logger: Logger, warnings: ReadonlySet<string>): Logger {
+  if (warnings.size === 0) return logger;
+  // Keep filtering local to this resolved config. The caller may reuse its
+  // custom logger for another server with different optimizer requirements.
+  return {
+    get hasWarned() {
+      return logger.hasWarned;
+    },
+    set hasWarned(value) {
+      logger.hasWarned = value;
+    },
+    info: logger.info.bind(logger),
+    warn(msg, options) {
+      if (!warnings.has(stripAnsi(msg))) logger.warn(msg, options);
+    },
+    warnOnce: logger.warnOnce.bind(logger),
+    error: logger.error.bind(logger),
+    clearScreen: logger.clearScreen.bind(logger),
+    hasErrorLogged: logger.hasErrorLogged.bind(logger),
   };
 }
 
@@ -4246,7 +4258,11 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               );
             }
           }
-          suppressOptionalOptimizeDepsWarnings(config.logger, optionalWarnings);
+          // Vite's resolved top-level fields are typed readonly, but the config
+          // is mutable here and environment loggers delegate to this property.
+          Object.assign(config, {
+            logger: createOptionalOptimizeDepsLogger(config.logger, optionalWarnings),
+          });
         }
 
         // Keep worker entries and code-split chunks in a distinct output
