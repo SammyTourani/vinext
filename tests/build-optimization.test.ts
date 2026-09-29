@@ -1157,23 +1157,91 @@ describe("optimizeDeps.exclude for vinext", () => {
         plugins: [],
       });
 
-      logger.warn(
-        "Failed to resolve dependency: use-sync-external-store/shim/index.js, present in client 'optimizeDeps.include'",
-      );
-      logger.warn(
-        "Failed to resolve dependency: \x1b[36muse-sync-external-store/shim/with-selector\x1b[39m, present in client 'optimizeDeps.include'",
-      );
-      logger.warn(
-        "Failed to resolve dependency: other-package, present in client 'optimizeDeps.include'",
-      );
+      for (const id of [
+        "use-sync-external-store/shim",
+        "use-sync-external-store/shim/index.js",
+        "use-sync-external-store/shim/with-selector",
+        "use-sync-external-store/shim/with-selector.js",
+        "use-sync-external-store/with-selector",
+        "use-sync-external-store/with-selector.js",
+      ]) {
+        logger.warn(
+          `Failed to resolve dependency: ${id}, present in client 'optimizeDeps.include'`,
+        );
+        logger.warn(
+          `Failed to resolve dependency: \x1b[36m${id}\x1b[39m, present in client 'optimizeDeps.include'`,
+        );
+      }
 
-      expect(warned).toEqual([
+      const actionableWarnings = [
         "Failed to resolve dependency: other-package, present in client 'optimizeDeps.include'",
-      ]);
+        "Failed to resolve dependency: use-sync-external-store/shim/unknown, present in client 'optimizeDeps.include'",
+        "Failed to resolve dependency: other-package > use-sync-external-store/shim, present in client 'optimizeDeps.include'",
+        "Cannot optimize dependency: use-sync-external-store/shim, present in client 'optimizeDeps.include'",
+      ];
+      for (const warning of actionableWarnings) logger.warn(warning);
+
+      expect(warned).toEqual(actionableWarnings);
     } finally {
       await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
   }, 15000);
+
+  it.each([
+    { name: "dev defaults", expected: true },
+    { name: "production", command: "build", expected: false },
+    { name: "top-level noDiscovery", topLevel: { noDiscovery: true }, expected: false },
+    { name: "client noDiscovery", client: { noDiscovery: true }, expected: false },
+    {
+      name: "client discovery override",
+      topLevel: { noDiscovery: true },
+      client: { noDiscovery: false },
+      expected: true,
+    },
+    {
+      name: "package exclusion",
+      topLevel: { exclude: ["use-sync-external-store"] },
+      expected: false,
+    },
+    {
+      name: "client package exclusion",
+      client: { exclude: ["use-sync-external-store"] },
+      expected: false,
+    },
+    {
+      name: "subpath exclusion",
+      client: { exclude: ["use-sync-external-store/shim"] },
+      expected: false,
+      selectorExpected: true,
+    },
+  ])("respects optional client optimizer settings: $name", async (options) => {
+    const vinext = (await import("../packages/vinext/src/index.js")).default;
+    const plugin = vinext().find((p: any) => p.name === "vinext:config") as any;
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-store-optdeps-"));
+    await fsp.mkdir(path.join(root, "app"));
+    await fsp.writeFile(path.join(root, "app/page.tsx"), "export default () => null;");
+    try {
+      const nestedInclude = "example-lib > use-sync-external-store/shim";
+      const config = await plugin.config(
+        {
+          root,
+          build: {},
+          optimizeDeps: { ...options.topLevel, include: [nestedInclude] },
+          environments: { client: { optimizeDeps: options.client } },
+        },
+        { command: options.command ?? "serve" },
+      );
+      const includes = config.environments.client.optimizeDeps.include as string[];
+      expect(includes).toContain(nestedInclude);
+      expect(includes.includes("use-sync-external-store/shim")).toBe(options.expected);
+      expect(includes.includes("use-sync-external-store/shim/index.js")).toBe(options.expected);
+      expect(includes.includes("use-sync-external-store/with-selector")).toBe(
+        options.selectorExpected ?? options.expected,
+      );
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── process.env.NODE_ENV define ─────────────────────────────────────────────

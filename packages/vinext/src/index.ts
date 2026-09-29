@@ -388,8 +388,10 @@ const APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE = Object.freeze([
   "use-sync-external-store/with-selector.js",
 ]);
 
+// Only quiet our optional entries. Explicit nested includes and other
+// resolution/optimization failures still need to reach the application's logger.
 const OPTIONAL_OPTIMIZE_DEPS_WARNING_RE =
-  /Failed to resolve dependency: .*use-sync-external-store\/(?:shim|with-selector).*present in .* 'optimizeDeps\.include'/;
+  /^Failed to resolve dependency: use-sync-external-store\/(?:shim(?:\/index\.js|\/with-selector(?:\.js)?)?|with-selector(?:\.js)?), present in .+ 'optimizeDeps\.include'$/;
 const VINEXT_FILTERED_OPTIMIZE_DEPS_WARN = Symbol.for("vinext.filteredOptimizeDepsWarn");
 const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 const RSC_ENVIRONMENTS = new Set(["rsc", "ssr", "client"]);
@@ -3809,6 +3811,23 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               }
             } catch {}
           }
+          const clientOptimizerExcludes = [
+            ...incomingExclude,
+            ...(config.environments?.client?.optimizeDeps?.exclude ?? []),
+          ];
+          const optionalClientOptimizeIncludes =
+            env.command === "serve" &&
+            !(
+              config.environments?.client?.optimizeDeps?.noDiscovery ??
+              config.optimizeDeps?.noDiscovery
+            )
+              ? APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE.filter(
+                  (id) =>
+                    !clientOptimizerExcludes.some(
+                      (excluded) => id === excluded || id.startsWith(`${excluded}/`),
+                    ),
+                )
+              : [];
           const appClientInput: Record<string, string> = { index: VIRTUAL_APP_BROWSER_ENTRY };
           if (hasPagesDir) {
             appClientInput["vinext-client-entry"] = VIRTUAL_CLIENT_ENTRY;
@@ -3983,7 +4002,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     "react-dom/client",
                     "react/jsx-runtime",
                     "react/jsx-dev-runtime",
-                    ...APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE,
+                    ...optionalClientOptimizeIncludes,
                   ]),
                 ],
                 // The client scanner also crawls app/ source files, so it
