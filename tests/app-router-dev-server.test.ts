@@ -2,6 +2,7 @@ import http from "node:http";
 import fsp from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { createLogger, createServer, type ViteDevServer } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { APP_FIXTURE_DIR, fetchHtml, startFixtureServer } from "./helpers.js";
@@ -2621,37 +2622,72 @@ describe("App Router client modules nested in packages in dev", () => {
 });
 
 describe("optional external store dependency warnings", () => {
-  it("starts and serves an App Router app without the package and without warnings", async () => {
-    const root = await createExternalStoreFixture("absent");
-    const requireFromProject = createRequire(path.join(root, "package.json"));
-    const warnings: string[] = [];
-    const logger = createLogger("warn");
-    logger.warn = (message) => {
-      warnings.push(message);
-    };
-    logger.warnOnce = (message) => logger.warn(message);
-    let server: ViteDevServer | undefined;
-    try {
-      expect(() => requireFromProject.resolve("use-sync-external-store/shim")).toThrow();
-      server = await createServer({
-        root,
-        configFile: false,
-        cacheDir: path.join(root, ".vite"),
-        customLogger: logger,
-        plugins: [vinext({ appDir: root })],
-        server: { host: "127.0.0.1", port: 0 },
-      });
-      await server.listen();
-      const address = server.httpServer!.address();
-      if (!address || typeof address === "string") throw new Error("Missing fixture address");
-      const response = await fetch(`http://127.0.0.1:${address.port}/`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toContain("No external store dependency");
-      await server.environments.client.depsOptimizer?.scanProcessing;
-      expect(warnings).toEqual([]);
-    } finally {
-      await server?.close();
-      await fsp.rm(root, { recursive: true, force: true });
-    }
-  }, 30000);
+  it.each(["none", "config", "configEnvironment"] as const)(
+    "keeps automatic includes quiet and later %s hook includes actionable",
+    async (laterHook) => {
+      const root = await createExternalStoreFixture("absent");
+      const requireFromProject = createRequire(path.join(root, "package.json"));
+      const warnings: string[] = [];
+      const logger = createLogger("warn");
+      logger.warn = (message) => {
+        warnings.push(stripVTControlCharacters(message));
+      };
+      logger.warnOnce = (message) => logger.warn(message);
+      let server: ViteDevServer | undefined;
+      try {
+        expect(() => requireFromProject.resolve("use-sync-external-store/shim")).toThrow();
+        server = await createServer({
+          root,
+          configFile: false,
+          cacheDir: path.join(root, ".vite"),
+          customLogger: logger,
+          plugins: [
+            vinext({ appDir: root }),
+            {
+              name: "explicit-store-include",
+              enforce: "post",
+              config() {
+                if (laterHook === "config") {
+                  return {
+                    environments: {
+                      client: { optimizeDeps: { include: ["use-sync-external-store/shim"] } },
+                    },
+                  };
+                }
+              },
+              configEnvironment: {
+                order: "post",
+                handler(name) {
+                  if (laterHook === "configEnvironment" && name === "client") {
+                    return { optimizeDeps: { include: ["use-sync-external-store/shim"] } };
+                  }
+                },
+              },
+            },
+          ],
+          server: { host: "127.0.0.1", port: 0 },
+        });
+        await server.listen();
+        const address = server.httpServer!.address();
+        if (!address || typeof address === "string") throw new Error("Missing fixture address");
+        const response = await fetch(`http://127.0.0.1:${address.port}/`);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain("No external store dependency");
+        await server.environments.client.depsOptimizer?.scanProcessing;
+        if (laterHook === "none") {
+          expect(warnings).toEqual([]);
+        } else {
+          expect(warnings.length).toBeGreaterThan(0);
+          for (const warning of warnings) {
+            expect(warning).toContain("use-sync-external-store/shim,");
+            expect(warning).toContain("client 'optimizeDeps.include'");
+          }
+        }
+      } finally {
+        await server?.close();
+        await fsp.rm(root, { recursive: true, force: true });
+      }
+    },
+    30000,
+  );
 });

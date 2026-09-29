@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vite-plus/test";
-import { createBuilder, parseAst } from "vite";
+import { createBuilder, createLogger, mergeConfig, parseAst } from "vite";
 import { augmentSsrManifestFromBundle as _augmentSsrManifestFromBundle } from "../packages/vinext/src/build/ssr-manifest.js";
 import {
   hasExportAllCandidate as _hasExportAllCandidate,
@@ -940,6 +940,14 @@ describe("optimizeDeps.exclude for vinext", () => {
         },
       };
       (mainPlugin as any).configEnvironment("worker", workerEnvConfig);
+      await (mainPlugin as any).configResolved({
+        cacheDir: path.join(tmpDir, ".vite"),
+        command: "serve",
+        configFile: false,
+        environments: { worker: workerEnvConfig },
+        logger: createLogger("silent"),
+        plugins: [],
+      });
 
       expect(workerEnvConfig.optimizeDeps.entries).toContain("already-present.ts");
       expect(workerEnvConfig.optimizeDeps.entries).toContain("pages/**/*.{tsx,ts,jsx,js}");
@@ -1055,11 +1063,12 @@ describe("optimizeDeps.exclude for vinext", () => {
           { command: "serve" },
         );
 
-        (mainPlugin as any).configEnvironment("worker", {
+        const workerConfig = {
           optimizeDeps: {
             include: explicit ? ["use-sync-external-store/with-selector"] : [],
           },
-        });
+        };
+        (mainPlugin as any).configEnvironment("worker", workerConfig);
         const warned: string[] = [];
         const logger = {
           hasWarned: false,
@@ -1081,7 +1090,7 @@ describe("optimizeDeps.exclude for vinext", () => {
           cacheDir: path.join(tmpDir, "node_modules", ".vite"),
           command: "serve",
           configFile: false,
-          environments: {},
+          environments: { worker: workerConfig },
           logger,
           plugins: [],
         });
@@ -1151,9 +1160,16 @@ describe("optimizeDeps.exclude for vinext", () => {
       await fsp.writeFile(path.join(tmpDir, "next.config.mjs"), `export default {};`);
 
       try {
-        await (mainPlugin as any).config(
-          { root: tmpDir, build: {}, plugins: [], ...options.config },
-          { command: "serve" },
+        const config = mergeConfig(
+          options.config,
+          await (mainPlugin as any).config(
+            { root: tmpDir, build: {}, plugins: [], ...options.config },
+            { command: "serve" },
+          ),
+        );
+        const clientConfig = mergeConfig(
+          { optimizeDeps: config.optimizeDeps },
+          config.environments.client,
         );
 
         const warned: string[] = [];
@@ -1177,7 +1193,7 @@ describe("optimizeDeps.exclude for vinext", () => {
           cacheDir: path.join(tmpDir, "node_modules", ".vite"),
           command: "serve",
           configFile: false,
-          environments: {},
+          environments: { client: clientConfig },
           logger,
           plugins: [],
         });
@@ -1264,7 +1280,19 @@ describe("optimizeDeps.exclude for vinext", () => {
         },
         { command: options.command ?? "serve" },
       );
-      const includes = config.environments.client.optimizeDeps.include as string[];
+      const clientConfig = mergeConfig(
+        { optimizeDeps: options.topLevel },
+        mergeConfig(config.environments.client, { optimizeDeps: options.client }),
+      );
+      await plugin.configResolved({
+        cacheDir: path.join(root, ".vite"),
+        command: options.command ?? "serve",
+        configFile: false,
+        environments: { client: clientConfig },
+        logger: createLogger("silent"),
+        plugins: [],
+      });
+      const includes = clientConfig.optimizeDeps.include as string[];
       expect(includes).toContain(nestedInclude);
       expect(includes.includes("use-sync-external-store/shim")).toBe(options.expected);
       expect(includes.includes("use-sync-external-store/shim/index.js")).toBe(options.expected);

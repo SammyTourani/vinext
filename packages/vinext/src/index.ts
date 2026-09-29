@@ -371,7 +371,6 @@ const PAGES_CLOUDFLARE_WORKER_OPTIMIZE_DEPS_INCLUDE = Object.freeze([
   "react-dom/server.edge",
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
-  "use-sync-external-store/with-selector",
 ]);
 
 // In dev, @vitejs/plugin-rsc can serve "use client" modules nested inside a
@@ -1653,7 +1652,6 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
   let pagesTsconfigAliases: Record<string, string> = {};
   let pagesBundledPackages = new Set<string>();
   let isServeCommand = false;
-  const optionalOptimizeDepsWarnings = new Set<string>();
   let buildEmptyOutDir: boolean | undefined;
   let buildLifecycleEnabled = false;
   let hasPlainPagesBuildEnvironments = false;
@@ -2456,7 +2454,6 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
         buildEmptyOutDir =
           typeof config.build?.emptyOutDir === "boolean" ? config.build.emptyOutDir : undefined;
         isServeCommand = env.command === "serve";
-        optionalOptimizeDepsWarnings.clear();
         root = path.resolve(toSlash(process.cwd()), config.root ?? ".");
         const devCliLifecycleEnabled =
           env.command === "serve" &&
@@ -3806,34 +3803,6 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               }
             } catch {}
           }
-          const clientOptimizerExcludes = [
-            ...incomingExclude,
-            ...(config.environments?.client?.optimizeDeps?.exclude ?? []),
-          ];
-          const optionalClientOptimizeIncludes =
-            env.command === "serve" &&
-            !(
-              config.environments?.client?.optimizeDeps?.noDiscovery ??
-              config.optimizeDeps?.noDiscovery
-            )
-              ? APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE.filter(
-                  (id) =>
-                    !clientOptimizerExcludes.some(
-                      (excluded) => id === excluded || id.startsWith(`${excluded}/`),
-                    ),
-                )
-              : [];
-          const explicitClientIncludes = [
-            ...incomingInclude,
-            ...(config.environments?.client?.optimizeDeps?.include ?? []),
-          ];
-          for (const id of optionalClientOptimizeIncludes) {
-            if (!explicitClientIncludes.includes(id)) {
-              optionalOptimizeDepsWarnings.add(
-                `Failed to resolve dependency: ${id}, present in client 'optimizeDeps.include'`,
-              );
-            }
-          }
           const appClientInput: Record<string, string> = { index: VIRTUAL_APP_BROWSER_ENTRY };
           if (hasPagesDir) {
             appClientInput["vinext-client-entry"] = VIRTUAL_CLIENT_ENTRY;
@@ -4008,7 +3977,6 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     "react-dom/client",
                     "react/jsx-runtime",
                     "react/jsx-dev-runtime",
-                    ...optionalClientOptimizeIncludes,
                   ]),
                 ],
                 // The client scanner also crawls app/ source files, so it
@@ -4193,11 +4161,6 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
             config.optimizeDeps.entries,
             pagesOptimizeEntries,
           );
-          if (!config.optimizeDeps.include?.includes("use-sync-external-store/with-selector")) {
-            optionalOptimizeDepsWarnings.add(
-              `Failed to resolve dependency: use-sync-external-store/with-selector, present in ${name} 'optimizeDeps.include'`,
-            );
-          }
           config.optimizeDeps.include = mergeStringArrayValues(
             config.optimizeDeps.include,
             PAGES_CLOUDFLARE_WORKER_OPTIMIZE_DEPS_INCLUDE,
@@ -4243,9 +4206,35 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           }
         }
         if (isServeCommand && (hasAppDir || (hasCloudflarePlugin && hasPagesDir))) {
-          // Only quiet entries we added in this environment. Explicit includes
-          // and failures in other environments remain actionable warnings.
-          suppressOptionalOptimizeDepsWarnings(config.logger, optionalOptimizeDepsWarnings);
+          // Wait for all config/configEnvironment hooks before adding optional
+          // defaults, so other plugins' explicit includes and opt-outs win.
+          // Optimizers are created afterward, so these are still startup includes.
+          const optionalWarnings = new Set<string>();
+          for (const [name, environment] of Object.entries(config.environments)) {
+            const optimizer = environment.optimizeDeps;
+            const optionalIncludes = hasAppDir
+              ? name === "client" && !optimizer.noDiscovery
+                ? APP_CLIENT_OPTIONAL_OPTIMIZE_DEPS_INCLUDE
+                : []
+              : name !== "client"
+                ? ["use-sync-external-store/with-selector"]
+                : [];
+            for (const id of optionalIncludes) {
+              if (
+                optimizer.include?.includes(id) ||
+                optimizer.exclude?.some(
+                  (excluded) => id === excluded || id.startsWith(`${excluded}/`),
+                )
+              ) {
+                continue;
+              }
+              (optimizer.include ??= []).push(id);
+              optionalWarnings.add(
+                `Failed to resolve dependency: ${id}, present in ${name} 'optimizeDeps.include'`,
+              );
+            }
+          }
+          suppressOptionalOptimizeDepsWarnings(config.logger, optionalWarnings);
         }
 
         // Keep worker entries and code-split chunks in a distinct output
