@@ -3848,8 +3848,18 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
             appClientInput["vinext-client-entry"] = VIRTUAL_CLIENT_ENTRY;
           }
 
+          // Nitro leaves the rsc and ssr dev environments with plugin-rsc's
+          // `noExternal` package list instead of `noExternal: true`. Vite then
+          // externalizes a bare import that is not an alias before resolveId
+          // runs, so when `next` is installed the resolveId-only shims
+          // (next/navigation, next/error) load real Next.js instead of vinext.
+          // Keep `next` in Vite's pipeline, as the Node environments below do.
+          const nitroDevEnvironmentResolve =
+            hasNitroPlugin && env?.command === "serve" ? { resolve: { noExternal: ["next"] } } : {};
+
           viteConfig.environments = {
             rsc: {
+              ...nitroDevEnvironmentResolve,
               ...(hasCloudflarePlugin || hasNitroPlugin
                 ? {}
                 : {
@@ -3917,6 +3927,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               },
             },
             ssr: {
+              ...nitroDevEnvironmentResolve,
               ...(hasCloudflarePlugin || hasNitroPlugin
                 ? {}
                 : {
