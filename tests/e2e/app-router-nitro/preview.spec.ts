@@ -6,7 +6,9 @@ import { waitForAppRouterHydration } from "../helpers";
 
 test.describe("App Router on Nitro (vite preview)", () => {
   test("renders and hydrates the home page", async ({ page }) => {
-    await page.goto("/");
+    // The home page renders an eager remote image; wait for the document, not
+    // the load event, and rely on the explicit hydration wait below.
+    await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.locator("h1")).toHaveText("vinext + nitro");
     await waitForAppRouterHydration(page);
 
